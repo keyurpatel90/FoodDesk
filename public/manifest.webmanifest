@@ -1,0 +1,10 @@
+{
+  "name": "Food Event Desk",
+  "short_name": "Food Desk",
+  "description": "Event POS and live kitchen display",
+  "start_url": "/?mode=cashier",
+  "display": "standalone",
+  "background_color": "#f7f7f7",
+  "theme_color": "#111111",
+  "icons": []
+}
