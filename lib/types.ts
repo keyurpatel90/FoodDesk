@@ -52,6 +52,7 @@ export type Order = {
   total: number;
   payment_method: PaymentMethod;
   covers: number;
+  token_no?: string | null;
   notes?: string | null;
   cash_received?: number | null;
   change_due?: number | null;

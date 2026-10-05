@@ -5,6 +5,8 @@ create extension if not exists pgcrypto;
 -- ============================================================
 
 drop function if exists public.place_order(integer,text,jsonb);
+-- Replaced by the version with p_token_no (avoids ambiguous overloads in PostgREST).
+drop function if exists public.place_order(text,jsonb,integer,text,uuid,text,integer,integer);
 
 create table if not exists public.profiles(
   id uuid primary key references auth.users(id) on delete cascade,
@@ -83,6 +85,7 @@ create table if not exists public.orders(
   payment_method text not null default 'cash' check(payment_method in ('cash','upi','pos')),
   covers integer not null default 1 check(covers > 0),
   notes text,
+  token_no text,
   cash_received integer,
   change_due integer,
   created_by uuid references public.profiles(id),
@@ -126,6 +129,7 @@ alter table public.orders add column if not exists discount_type text;
 alter table public.orders add column if not exists discount_value integer;
 alter table public.orders add column if not exists covers integer not null default 1;
 alter table public.orders add column if not exists notes text;
+alter table public.orders add column if not exists token_no text;
 alter table public.orders add column if not exists cash_received integer;
 alter table public.orders add column if not exists change_due integer;
 alter table public.orders add column if not exists created_by uuid references public.profiles(id);
@@ -223,7 +227,8 @@ create or replace function public.place_order(
   p_discount_id uuid default null,
   p_custom_discount_type text default null,
   p_custom_discount_value integer default null,
-  p_cash_received integer default null
+  p_cash_received integer default null,
+  p_token_no text default null
 ) returns public.orders
 language plpgsql
 security definer
@@ -249,10 +254,12 @@ declare
   v_features jsonb;
   v_max_custom integer;
   v_require_cash boolean;
+  v_token text := nullif(upper(trim(coalesce(p_token_no,''))),'');
 begin
   if coalesce(public.current_role(),'') not in ('admin','manager','cashier') then raise exception 'Not allowed to place orders'; end if;
   if jsonb_array_length(coalesce(p_items,'[]'::jsonb)) = 0 then raise exception 'Order has no items'; end if;
   if coalesce(p_covers,0) <= 0 then raise exception 'Covers must be at least 1'; end if;
+  if v_token is not null and v_token !~ '^[A-Z0-9-]{1,10}$' then raise exception 'Token number may contain only letters, digits and hyphen (max 10 characters)'; end if;
 
   select service_day_cutoff_hour, max_custom_discount_percent, require_cash_received, features
     into v_cutoff, v_max_custom, v_require_cash, v_features
@@ -316,8 +323,8 @@ begin
     on conflict(service_day) do nothing;
   update public.service_day_counters set last_order_no=last_order_no+1 where service_day=v_service_day returning last_order_no into v_next_no;
 
-  insert into public.orders(order_no,service_day,status,subtotal,discount_amount,discount_id,discount_name,discount_type,discount_value,total,payment_method,covers,notes,cash_received,change_due,created_by)
-  values(v_next_no,v_service_day,'new',v_subtotal,v_discount_amount,p_discount_id,v_discount_name,v_discount_type,v_discount_value,v_total,p_payment_method,p_covers,nullif(trim(p_notes),''),p_cash_received,v_change,auth.uid())
+  insert into public.orders(order_no,service_day,status,subtotal,discount_amount,discount_id,discount_name,discount_type,discount_value,total,payment_method,covers,notes,token_no,cash_received,change_due,created_by)
+  values(v_next_no,v_service_day,'new',v_subtotal,v_discount_amount,p_discount_id,v_discount_name,v_discount_type,v_discount_value,v_total,p_payment_method,p_covers,nullif(trim(p_notes),''),v_token,p_cash_received,v_change,auth.uid())
   returning * into v_order;
 
   for v_item in select * from jsonb_array_elements(p_items) loop
@@ -329,12 +336,12 @@ begin
   end loop;
 
   insert into public.audit_logs(actor_id,action,entity_type,entity_id,details)
-  values(auth.uid(),'create','order',v_order.id,jsonb_build_object('total',v_total,'payment_method',p_payment_method));
+  values(auth.uid(),'create','order',v_order.id,jsonb_build_object('total',v_total,'payment_method',p_payment_method,'token_no',v_token));
   return v_order;
 end;
 $$;
 
-grant execute on function public.place_order(text,jsonb,integer,text,uuid,text,integer,integer) to authenticated;
+grant execute on function public.place_order(text,jsonb,integer,text,uuid,text,integer,integer,text) to authenticated;
 
 create or replace function public.cancel_order_item(p_item_id uuid, p_reason text default null)
 returns public.order_items
@@ -472,11 +479,11 @@ create policy counters_none on public.service_day_counters for all to authentica
 
 -- Defaults / seed menu. Existing products are preserved on subsequent runs.
 insert into public.products(name,price,station,category,sort_order)
-select 'Waffle',100,'waffle','Waffle',1 where not exists(select 1 from public.products where name='Waffle');
+select 'Waffle',50,'waffle','Waffle',1 where not exists(select 1 from public.products where name='Waffle');
 insert into public.products(name,price,station,category,sort_order)
-select 'Chole Kulche',120,'chole','Chaat',1 where not exists(select 1 from public.products where name='Chole Kulche');
+select 'Chole Kulche',60,'chole','Chaat',1 where not exists(select 1 from public.products where name='Chole Kulche');
 insert into public.products(name,price,station,category,sort_order)
-select 'Pav Bataka',60,'pav','Street Food',1 where not exists(select 1 from public.products where name='Pav Bataka');
+select 'Pav Bataka',40,'pav','Street Food',1 where not exists(select 1 from public.products where name='Pav Bataka');
 
 insert into public.discounts(name,type,value,active,min_order_amount,max_discount_amount)
 select '10% Event Offer','percent',10,true,0, null where not exists(select 1 from public.discounts where name='10% Event Offer');

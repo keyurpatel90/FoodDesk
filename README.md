@@ -7,7 +7,7 @@ A secure, phone-first food-event POS and kitchen display system inspired by the 
 - Supabase Auth login with staff profiles and server-side RBAC roles: Admin, Manager, Cashier, Kitchen, Treasurer.
 - Admin staff management: create users, assign roles and disable accounts.
 - Admin settings with feature flags: enable/disable Cashier, Kitchen, Dashboard, Orders, Menu, Discounts, Staff, Reports, Printing, custom discounts, cash/change and payment methods.
-- Cashier order entry with covers, kitchen notes, saved discounts, custom discount limits, cash received and change due.
+- Cashier order entry with an optional **token number** (highlighted in yellow on the kitchen, station, orders and receipt views; searchable in Orders), covers, kitchen notes, saved discounts, custom discount limits, cash received and change due.
 - Server-validated pricing and discount calculation through secure Postgres functions; the browser cannot tamper with the final price.
 - Order correction: cancel an individual line or an entire order with audit records.
 - Kitchen KDS with live Supabase Realtime updates, station filtering, elapsed-time alerts and automatic READY status.
