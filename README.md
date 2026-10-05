@@ -1,76 +1,65 @@
-# Food Event Desk — Vercel Edition
+# Food Event Desk v2 — Next.js + Supabase
 
-A FoodDesk-inspired event POS + Kitchen Display PWA designed for temporary food events. Built with Next.js and Supabase Realtime.
+A secure, phone-first food-event POS and kitchen display system inspired by the open-source FoodDesk feature set.
 
-## What it does
+## Included in this version
 
-- 3+ cashier phones can create orders at the same time.
-- Atomic order creation: the kitchen never receives a half-created order.
-- Automatic sequential order numbers from Postgres.
-- Cash / UPI payment tracking.
-- Main kitchen display with All / Waffle / Chole / Pav filters.
-- Dedicated station URLs: `?mode=waffle`, `?mode=chole`, `?mode=pav`.
-- Station staff can mark individual items READY.
-- Order becomes READY only after every line item is complete.
-- Dashboard: orders, revenue, average order, ready orders, item sales.
-- Admin menu/pricing management.
-- Android PWA: open in Chrome → Add to Home screen.
+- Supabase Auth login with staff profiles and server-side RBAC roles: Admin, Manager, Cashier, Kitchen, Treasurer.
+- Admin staff management: create users, assign roles and disable accounts.
+- Admin settings with feature flags: enable/disable Cashier, Kitchen, Dashboard, Orders, Menu, Discounts, Staff, Reports, Printing, custom discounts, cash/change and payment methods.
+- Cashier order entry with covers, kitchen notes, saved discounts, custom discount limits, cash received and change due.
+- Server-validated pricing and discount calculation through secure Postgres functions; the browser cannot tamper with the final price.
+- Order correction: cancel an individual line or an entire order with audit records.
+- Kitchen KDS with live Supabase Realtime updates, station filtering, elapsed-time alerts and automatic READY status.
+- Station views for Waffle, Chole Kulche and Pav Bataka.
+- Daily service-day order numbering with configurable cutoff hour.
+- Dashboard with revenue, order count, covers, average per cover, payment mix, item sales and CSV export.
+- Browser-printable receipts/order sheets.
+- PWA support retained from the original project.
 
-## Your event device setup
+FoodDesk's published feature list also includes guest self-ordering/online payments, CUPS printing, multilingual printed documents and a PDF end-of-day report. Those capabilities are not silently faked here; this version focuses on the event-counter workflows that fit the existing Next.js/Supabase architecture. The reference project's feature set is documented in its public README.
 
-- Phone 1: `/?mode=cashier`
-- Phone 2: `/?mode=cashier`
-- Phone 3: `/?mode=cashier`
-- Phone 4: `/?mode=waffle`
-- Phone 5: `/?mode=chole` or `/?mode=pav`
-- Tablet: `/?mode=kitchen`
-- Optional owner device: `/?mode=dashboard`
+## Supabase setup
 
-## Deploy to Vercel + Supabase
+1. Create a Supabase project.
+2. In SQL Editor, run **`supabase/schema.sql`**. It creates the schema, RLS policies, staff profile trigger, secure order RPCs and seed menu/discounts.
+3. In Supabase Auth, create the first administrator account with email/password.
+4. Promote it once from SQL Editor:
 
-### 1. Create Supabase project
+```sql
+select public.bootstrap_admin('your-admin-email@example.com');
+```
 
-Create a free Supabase project. In **SQL Editor**, paste and run:
+5. Add the following Vercel environment variables:
 
-`supabase/schema.sql`
+```text
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY
+```
 
-The script creates the database, RLS policies, atomic `place_order` function, seed products, indexes, and Realtime publication entries.
+`SUPABASE_SERVICE_ROLE_KEY` is server-only and must never be prefixed with `NEXT_PUBLIC_`.
 
-### 2. Get Supabase credentials
-
-In Supabase Project Settings → API, copy:
-
-- Project URL
-- Anon/publishable key
-
-### 3. Deploy
-
-Push this folder to GitHub, then import the repository into Vercel. Vercel will detect Next.js automatically.
-
-Add these Vercel Environment Variables for Production (and Preview if desired):
-
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-
-Then deploy.
-
-### 4. Open on Android
-
-After deployment, open the Vercel URL in Chrome. Use **Add to Home screen** on each device. Save a different mode URL for each device.
-
-## Local development
+## Deploy
 
 ```bash
 npm install
-cp .env.example .env.local
-# edit .env.local
-npm run dev
+npm run build
+npm run start
 ```
 
-## Important security note
+Vercel detects Next.js automatically. The project already contains `vercel.json` and the PWA manifest.
 
-This event MVP intentionally permits anonymous staff access so you can get the event running without an account-management system. It is suitable only for a controlled event environment. For a public/long-term deployment, add Supabase Auth, staff PINs/roles, and tighter RLS policies before exposing Admin or Dashboard data publicly.
+## Role access
 
-## Important operational note
+- **Admin:** everything, including staff and settings.
+- **Manager:** menu, discounts, orders, kitchen and dashboard/reporting; cannot manage staff/settings.
+- **Cashier:** cashier + own order management.
+- **Kitchen:** KDS/stations.
+- **Treasurer:** dashboard/reporting + order visibility.
 
-Use a stable Wi-Fi connection at the event. Realtime is used for live updates; the cashier should wait for the confirmation ticket before accepting the next order.
+The UI hides unavailable screens, but the important authorization also lives in Supabase RLS and security-definer database functions.
+
+## Notes about the original data
+
+The schema is written as an upgrade script for the original MVP. It adds the new columns and constraints without deleting existing product/order data. Existing historical order numbers are used to initialise the per-service-day counter before new orders are created.
