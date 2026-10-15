@@ -1,17 +1,247 @@
 'use client';
-import { useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Plus, Trash2 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
-import type { AppSettings, Product, Station } from '@/lib/types';
+import {
+    useState
+} from 'react';
+import {
+    ArrowLeft,
+    ArrowRight,
+    Check,
+    Plus,
+    Trash2
+} from 'lucide-react';
+import {
+    supabase
+} from '@/lib/supabase';
+import type {
+    AppSettings,
+    Product,
+    Station
+} from '@/lib/types';
 
-type Draft=Partial<Product>&{id?:string};
-const stations:[Station,string][]=[['waffle','Waffle'],['chole','Chole Kulche'],['pav','Pav Bataka']];
-export default function Onboarding({settings,onComplete}:{settings:AppSettings;onComplete:(s:AppSettings)=>void}){
- const [step,setStep]=useState(1); const [saving,setSaving]=useState(false); const [msg,setMsg]=useState('');
- const [event,setEvent]=useState({name:settings.event_name,start:settings.event_start_date||'',end:settings.event_end_date||'',location:settings.event_location||'',visitors:String(settings.expected_visitors||''),stalls:String(settings.number_stalls||1),cashiers:String(settings.number_cashiers||1)});
- const [products,setProducts]=useState<Draft[]>([{name:'Chole Kulche',price:600,food_cost:200,unit_type:'kg',station:'chole',category:'Street Food',active:true,sort_order:1},{name:'Mini Waffles',price:100,food_cost:30,unit_type:'piece',station:'waffle',category:'Dessert',active:true,sort_order:2},{name:'Pav Bataka',price:60,food_cost:20,unit_type:'piece',station:'pav',category:'Street Food',active:true,sort_order:3}]);
- function add(){setProducts(p=>[...p,{name:'',price:0,food_cost:0,unit_type:'piece',station:'waffle',category:'',active:true,sort_order:p.length+1}])}
- function update(i:number,k:string,v:any){setProducts(p=>p.map((x,n)=>n===i?{...x,[k]:v}:x))}
- async function finish(){setSaving(true);setMsg('');try{const {data:{user}}=await supabase.auth.getUser();if(!user)throw Error('Session expired');const {data:profile}=await supabase.from('profiles').select('organization_id,outlet_id').eq('id',user.id).single();const org=profile?.organization_id;const outlet=profile?.outlet_id;const payload={event_name:event.name||'FoodDesk Event',event_start_date:event.start||null,event_end_date:event.end||null,event_location:event.location,expected_visitors:Number(event.visitors)||0,number_stalls:Number(event.stalls)||1,number_cashiers:Number(event.cashiers)||1,onboarding_completed:true,event_mode:true,organization_id:org,outlet_id:outlet};const {data:s,error}=await supabase.from('app_settings').update(payload).eq('id',1).select().single();if(error)throw error;const valid=products.filter(p=>String(p.name).trim()&&Number(p.price)>0);if(valid.length){await supabase.from('products').insert(valid.map(p=>({...p,name:String(p.name).trim(),price:Number(p.price),food_cost:Number(p.food_cost)||0,unit_type:p.unit_type||'piece',organization_id:org,outlet_id:outlet})));}}onComplete({...settings,...s,onboarding_completed:true});}catch(e){setMsg(e instanceof Error?e.message:'Could not finish setup')}finally{setSaving(false)}}
- return <main className="authPage"><section className="wizard card"><div className="wizardHeader"><div><div className="brand">🍴 FoodDesk</div><p>Set up your event in a few minutes.</p></div><span>Step {step} of 4</span></div><div className="wizardSteps">{['Event','Menu','Operations','Finish'].map((x,i)=><div className={step===i+1?'active':step>i+1?'done':''} key={x}><b>{i+1}</b><span>{x}</span></div>)}</div>{step===1&&<div className="wizardBody"><h1>Tell us about the event</h1><div className="formgrid wide"><label>Event name<input value={event.name} onChange={e=>setEvent({...event,name:e.target.value})}/></label><label>Location<input value={event.location} onChange={e=>setEvent({...event,location:e.target.value})}/></label><label>Start date<input type="date" value={event.start} onChange={e=>setEvent({...event,start:e.target.value})}/></label><label>End date<input type="date" value={event.end} onChange={e=>setEvent({...event,end:e.target.value})}/></label><label>Expected visitors<input type="number" value={event.visitors} onChange={e=>setEvent({...event,visitors:e.target.value})}/></label><label>Number of stalls<input type="number" min="1" value={event.stalls} onChange={e=>setEvent({...event,stalls:e.target.value})}/></label></div></div>}{step===2&&<div className="wizardBody"><div className="sectionHead"><div><h1>Build your menu</h1><p>Set a sell rate per piece, kg, or litre. Cashiers later enter 200 g, 250 ml, and so on, and the price is calculated.</p></div><button className="secondary" onClick={add}><Plus size={16}/> Add item</button></div>{products.map((p,i)=><div className="wizardProduct" key={i}><input placeholder="Product name" value={p.name||''} onChange={e=>update(i,'name',e.target.value)}/><input type="number" placeholder="Sell ₹" value={p.price||''} onChange={e=>update(i,'price',Number(e.target.value))}/><input type="number" placeholder="Cost ₹" value={p.food_cost||''} onChange={e=>update(i,'food_cost',Number(e.target.value))}/><select value={p.unit_type||'piece'} onChange={e=>update(i,'unit_type',e.target.value)}><option value="piece">Per piece</option><option value="kg">Per kg</option><option value="litre">Per litre</option></select><select value={p.station} onChange={e=>update(i,'station',e.target.value)}>{stations.map(s=><option key={s[0]} value={s[0]}>{s[1]}</option>)}</select><button className="iconBtn" onClick={()=>setProducts(p=>p.filter((_,n)=>n!==i))}><Trash2 size={17}/></button></div>)}</div>}{step===3&&<div className="wizardBody"><h1>Operations</h1><div className="featureGrid"><div className="feature on"><span>Offline-first POS</span><b>ON</b></div><div className="feature on"><span>Kitchen Display</span><b>ON</b></div><div className="feature on"><span>Reports & Profit</span><b>ON</b></div><div className="feature on"><span>Inventory</span><b>ON</b></div></div><label>Expected cashiers<input type="number" min="1" value={event.cashiers} onChange={e=>setEvent({...event,cashiers:e.target.value})}/></label><p className="hint">You can create staff accounts and refine roles after setup.</p></div>}{step===4&&<div className="wizardBody center"><Check size={42}/><h1>FoodDesk is ready</h1><p>Event mode, menu, stations and reporting foundation are configured.</p></div>}{msg&&<div className="error">{msg}</div>}<div className="wizardActions">{step>1&&<button className="secondary" onClick={()=>setStep(step-1)}><ArrowLeft size={17}/> Back</button>}<span></span>{step<4?<button className="primary" onClick={()=>setStep(step+1)}>{step===3?'Review':'Continue'} <ArrowRight size={17}/></button>:<button className="primary" disabled={saving} onClick={finish}>{saving?'Saving…':'Finish setup'}</button>}</div></section></main>;
+type Draft = Partial < Product > & {
+    id ? : string
+};
+const stations: [Station, string][] = [
+    ['waffle', 'Waffle'],
+    ['chole', 'Chole Kulche'],
+    ['pav', 'Pav Bataka']
+];
+export default function Onboarding({
+    settings,
+    onComplete
+}: {
+    settings: AppSettings;onComplete: (s: AppSettings) => void
+}) {
+    const [step, setStep] = useState(1);
+    const [saving, setSaving] = useState(false);
+    const [msg, setMsg] = useState('');
+    const [event, setEvent] = useState({
+        name: settings.event_name,
+        start: settings.event_start_date || '',
+        end: settings.event_end_date || '',
+        location: settings.event_location || '',
+        visitors: String(settings.expected_visitors || ''),
+        stalls: String(settings.number_stalls || 1),
+        cashiers: String(settings.number_cashiers || 1)
+    });
+    const [products, setProducts] = useState < Draft[] > ([{
+        name: 'Chole Kulche',
+        price: 600,
+        food_cost: 200,
+        unit_type: 'kg',
+        station: 'chole',
+        category: 'Street Food',
+        active: true,
+        sort_order: 1
+    }, {
+        name: 'Mini Waffles',
+        price: 100,
+        food_cost: 30,
+        unit_type: 'piece',
+        station: 'waffle',
+        category: 'Dessert',
+        active: true,
+        sort_order: 2
+    }, {
+        name: 'Pav Bataka',
+        price: 60,
+        food_cost: 20,
+        unit_type: 'piece',
+        station: 'pav',
+        category: 'Street Food',
+        active: true,
+        sort_order: 3
+    }]);
+
+    function add() {
+        setProducts(p => [...p, {
+            name: '',
+            price: 0,
+            food_cost: 0,
+            unit_type: 'piece',
+            station: 'waffle',
+            category: '',
+            active: true,
+            sort_order: p.length + 1
+        }])
+    }
+
+    function update(i: number, k: string, v: any) {
+        setProducts(p => p.map((x, n) => n === i ? {
+            ...x,
+            [k]: v
+        } : x))
+    }
+    async function finish() {
+        setSaving(true);
+        setMsg('');
+        try {
+            const {
+                data: {
+                    user
+                }
+            } = await supabase.auth.getUser();
+            if (!user) throw Error('Session expired');
+            const {
+                data: profile
+            } = await supabase.from('profiles').select('organization_id,outlet_id').eq('id', user.id).single();
+            const org = profile?.organization_id;
+            const outlet = profile?.outlet_id;
+            const payload = {
+                event_name: event.name || 'FoodDesk Event',
+                event_start_date: event.start || null,
+                event_end_date: event.end || null,
+                event_location: event.location,
+                expected_visitors: Number(event.visitors) || 0,
+                number_stalls: Number(event.stalls) || 1,
+                number_cashiers: Number(event.cashiers) || 1,
+                onboarding_completed: true,
+                event_mode: true,
+                organization_id: org,
+                outlet_id: outlet
+            };
+            const {
+                data: s,
+                error
+            } = await supabase.from('app_settings').update(payload).eq('id', 1).select().single();
+            if (error) throw error;
+            const valid = products.filter(p => String(p.name).trim() && Number(p.price) > 0);
+            if (valid.length) {
+                await supabase.from('products').insert(valid.map(p => ({
+                    ...p,
+                    name: String(p.name).trim(),
+                    price: Number(p.price),
+                    food_cost: Number(p.food_cost) || 0,
+                    unit_type: p.unit_type || 'piece',
+                    organization_id: org,
+                    outlet_id: outlet
+                })));
+            }
+        onComplete({
+            ...settings,
+            ...s,
+            onboarding_completed: true
+        });
+    } catch (e) {
+        setMsg(e instanceof Error ? e.message : 'Could not finish setup')
+    } finally {
+        setSaving(false)
+    }
+}
+return < main className = "authPage" > < section className = "wizard card" > < div className = "wizardHeader" > < div > < div className = "brand" > 🍴FoodDesk < /div><p>Set up your event in a few minutes.</p > < /div><span>Step {step} of 4</span > < /div><div className="wizardSteps">{['Event','Menu','Operations','Finish'].map((x,i)=><div className={step===i+1?'active':step>i+1?'done':''} key={x}><b>{i+1}</b > < span > {
+x
+} < /span></div > )
+} < /div>{step===1&&<div className="wizardBody"><h1>Tell us about the event</h1 > < div className = "formgrid wide" > < label > Event name < input value = {
+    event.name
+}
+onChange = {
+    e => setEvent({
+        ...event,
+        name: e.target.value
+    })
+}
+/></label > < label > Location < input value = {
+    event.location
+}
+onChange = {
+    e => setEvent({
+        ...event,
+        location: e.target.value
+    })
+}
+/></label > < label > Start date < input type = "date"
+value = {
+    event.start
+}
+onChange = {
+    e => setEvent({
+        ...event,
+        start: e.target.value
+    })
+}
+/></label > < label > End date < input type = "date"
+value = {
+    event.end
+}
+onChange = {
+    e => setEvent({
+        ...event,
+        end: e.target.value
+    })
+}
+/></label > < label > Expected visitors < input type = "number"
+value = {
+    event.visitors
+}
+onChange = {
+    e => setEvent({
+        ...event,
+        visitors: e.target.value
+    })
+}
+/></label > < label > Number of stalls < input type = "number"
+min = "1"
+value = {
+    event.stalls
+}
+onChange = {
+    e => setEvent({
+        ...event,
+        stalls: e.target.value
+    })
+}
+/></label > < /div></div >
+} {
+    step === 2 && < div className = "wizardBody" > < div className = "sectionHead" > < div > < h1 > Build your menu < /h1><p>Set a sell rate per piece, kg, or litre. Cashiers later enter 200 g, 250 ml, and so on, and the price is calculated.</p > < /div><button className="secondary" onClick={add}><Plus size={16}/ > Add item < /button></div > {
+        products.map((p, i) => < div className = "wizardProduct"
+            key = {
+                i
+            } > < input placeholder = "Product name"
+            value = {
+                p.name || ''
+            }
+            onChange = {
+                e => update(i, 'name', e.target.value)
+            }
+            /><input type="number" placeholder="Sell ₹" value={p.price||''} onChange={e=>update(i,'price',Number(e.target.value))}/ > < input type = "number"
+            placeholder = "Cost ₹"
+            value = {
+                p.food_cost || ''
+            }
+            onChange = {
+                e => update(i, 'food_cost', Number(e.target.value))
+            }
+            /><select value={p.unit_type||'piece'} onChange={e=>update(i,'unit_type',e.target.value)}><option value="piece">Per piece</option > < option value = "kg" > Per kg < /option><option value="litre">Per litre</option > < /select><select value={p.station} onChange={e=>update(i,'station',e.target.value)}>{stations.map(s=><option key={s[0]} value={s[0]}>{s[1]}</option > )
+    } < /select><button className="iconBtn" onClick={()=>setProducts(p=>p.filter((_,n)=>n!==i))}><Trash2 size={17}/ > < /button></div > )
+} < /div>}{step===3&&<div className="wizardBody"><h1>Operations</h1 > < div className = "featureGrid" > < div className = "feature on" > < span > Offline - first POS < /span><b>ON</b > < /div><div className="feature on"><span>Kitchen Display</span > < b > ON < /b></div > < div className = "feature on" > < span > Reports & Profit < /span><b>ON</b > < /div><div className="feature on"><span>Inventory</span > < b > ON < /b></div > < /div><label>Expected cashiers<input type="number" min="1" value={event.cashiers} onChange={e=>setEvent({...event,cashiers:e.target.value})}/ > < /label><p className="hint">You can create staff accounts and refine roles after setup.</p > < /div>}{step===4&&<div className="wizardBody center"><Check size={42}/ > < h1 > FoodDesk is ready < /h1><p>Event mode, menu, stations and reporting foundation are configured.</p > < /div>}{msg&&<div className="error">{msg}</div >
+} < div className = "wizardActions" > {
+    step > 1 && < button className = "secondary"
+    onClick = {
+        () => setStep(step - 1)
+    } > < ArrowLeft size = {
+        17
+    }
+    /> Back</button >
+} < span > < /span>{step<4?<button className="primary" onClick={()=>setStep(step+1)}>{step===3?'Review':'Continue'} <ArrowRight size={17}/ > < /button>:<button className="primary" disabled={saving} onClick={finish}>{saving?'Saving…':'Finish setup'}</button >
+} < /div></section > < /main>;
 }
