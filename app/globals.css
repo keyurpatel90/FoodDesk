@@ -8,3 +8,22 @@
 .tokenBadge.big{display:flex;justify-content:center;margin:8px auto;font-size:30px;padding:8px 16px;width:max-content}
 .order.hasToken,.orderDetail.hasToken{border-left-color:#ca8a04;background:linear-gradient(90deg,#fefce8 0,#fff 45%)}
 .tokenRow .tokenInput{font-size:22px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;border:2px solid #ca8a04;background:#fefce8}
+
+.syncBanner{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border-radius:999px;background:#fff;border:1px solid #d0d5dd;font-size:11px;font-weight:850;white-space:nowrap}.syncBanner.offline{background:#fff7ed;border-color:#fed7aa;color:#9a3412}.syncBanner.syncing{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}.syncBanner.synced{background:#f0fdf4;border-color:#bbf7d0;color:#15803d}.syncDot{font-size:9px}.syncBtn{border:0;background:transparent;padding:1px;display:grid;place-items:center;color:inherit;cursor:pointer}.spin{animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+.live{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:850;color:#15803d}.offlineNotice{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;padding:9px 12px;border-radius:10px;font-weight:750;margin-bottom:12px}.disabledChoice{opacity:.45;cursor:not-allowed}.eventStrip{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;background:#0f172a;color:#fff;padding:12px 15px;border-radius:13px;margin-bottom:14px}.eventStrip b{font-size:15px;margin-right:auto}.eventStrip span{font-size:12px;opacity:.86}.smallStats .stat b{font-size:22px}.stationitem{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid #eef0f3}.stationitem:last-child{border-bottom:0}
+@media(max-width:1050px){.eventStrip b{width:100%;margin-right:0}.syncBanner{order:-1}.userActions{flex-wrap:wrap}.top-tabs{order:3}}
+.qtyInput{width:72px;border:1px solid #d0d5dd;border-radius:9px;padding:8px 6px;text-align:center;font-weight:800}
+.qtyModalBackdrop{position:fixed;inset:0;z-index:50;background:#0f172a99;display:grid;place-items:center;padding:16px}
+.qtyModal{width:min(420px,100%);background:#fff;border-radius:16px;padding:20px;box-shadow:0 18px 50px #0005}
+.qtyModal h2{margin:0 0 6px}
+.qtyBigLabel{display:flex;flex-direction:column;gap:8px;font-weight:750;font-size:12px;color:#344054;margin-top:12px}
+.qtyBig{width:100%;border:2px solid #0f172a;border-radius:12px;padding:14px;font-size:32px;font-weight:900;text-align:center}
+.qtyPresets{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 4px}
+.qtyModalActions{display:flex;gap:10px;margin-top:8px}
+.qtyModalActions .primary,.qtyModalActions .secondary{flex:1}
+.ticketLine{display:flex;justify-content:space-between;gap:10px;text-align:left;font-size:13px;font-weight:600;margin:8px 0;color:#344054}
+.ticketLine b{font-size:14px;color:#111827}
+.wizardProduct{display:grid;grid-template-columns:1.4fr .7fr .7fr .9fr .9fr auto;gap:8px;align-items:center;margin:8px 0}
+.wizardProduct input,.wizardProduct select{border:1px solid #d0d5dd;border-radius:9px;padding:10px;background:#fff}
+@media(max-width:900px){.wizardProduct{grid-template-columns:1fr 1fr}}
+

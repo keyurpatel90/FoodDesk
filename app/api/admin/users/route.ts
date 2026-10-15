@@ -20,7 +20,7 @@ async function requireAdmin(request: NextRequest) {
   const { data: { user } } = await authClient.auth.getUser();
   if (!user) return null;
   const { data: profile } = await adminClient.from('profiles').select('id,role,active').eq('id', user.id).single();
-  if (!(profile?.active && profile.role === 'admin')) return null;
+  if (!(profile?.active && (profile.role === 'owner' || profile.role === 'admin'))) return null;
   const { data: settings } = await adminClient.from('app_settings').select('features').eq('id',1).single();
   if (settings?.features && settings.features.staffManagement === false) return null;
   return user;
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
   const password = String(body.password ?? '');
   const displayName = String(body.display_name ?? '').trim();
   const role = String(body.role ?? 'cashier') as Role;
-  const allowedRoles: Role[] = ['admin', 'manager', 'cashier', 'kitchen', 'treasurer'];
+  const allowedRoles: Role[] = ['owner', 'manager', 'cashier', 'kitchen', 'runner', 'viewer'];
   if (!email || password.length < 6 || !displayName || !allowedRoles.includes(role)) {
     return NextResponse.json({ error: 'Email, name, role and a password of at least 6 characters are required.' }, { status: 400 });
   }
@@ -79,7 +79,12 @@ export async function PATCH(request: NextRequest) {
   const id = String(body.id ?? '');
   if (!id || id === caller.id) return NextResponse.json({ error: 'Choose another user to update.' }, { status: 400 });
   const patch: Record<string, unknown> = {};
-  if (body.role) patch.role = body.role;
+  const allowedRoles: Role[] = ['owner', 'manager', 'cashier', 'kitchen', 'runner', 'viewer'];
+  if (body.role) {
+    const nextRole = String(body.role) as Role;
+    if (!allowedRoles.includes(nextRole)) return NextResponse.json({ error: 'Invalid role.' }, { status: 400 });
+    patch.role = nextRole;
+  }
   if (typeof body.active === 'boolean') patch.active = body.active;
   if (body.display_name) patch.display_name = String(body.display_name).trim();
   const { data, error } = await adminClient.from('profiles').update(patch).eq('id', id).select('id,email,display_name,role,active,created_at').single();

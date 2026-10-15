@@ -1,12 +1,16 @@
 export type Station = 'waffle' | 'chole' | 'pav';
-export type Role = 'admin' | 'manager' | 'cashier' | 'kitchen' | 'treasurer';
+export type ProductUnit = 'piece' | 'kg' | 'litre';
+export type Role = 'owner' | 'manager' | 'cashier' | 'kitchen' | 'runner' | 'viewer' | 'admin' | 'treasurer';
 export type PaymentMethod = 'cash' | 'upi' | 'pos';
 export type DiscountType = 'percent' | 'fixed';
+export type SyncStatus = 'PENDING' | 'SYNCING' | 'SYNCED' | 'FAILED' | 'CONFLICT';
 
 export type Product = {
   id: string;
   name: string;
   price: number;
+  food_cost: number;
+  unit_type: ProductUnit;
   station: Station;
   category?: string | null;
   active: boolean;
@@ -35,15 +39,18 @@ export type OrderItem = {
   station: Station;
   qty: number;
   price: number;
+  food_cost: number;
+  unit_type?: ProductUnit;
   status: 'new' | 'done' | 'cancelled';
   cancel_reason?: string | null;
+  serverId?: string | null;
 };
 
 export type Order = {
   id: string;
   order_no: number;
   service_day: string;
-  status: 'new' | 'preparing' | 'ready' | 'cancelled';
+  status: 'new' | 'preparing' | 'ready' | 'delivered' | 'completed' | 'cancelled';
   subtotal: number;
   discount_amount: number;
   discount_name?: string | null;
@@ -58,7 +65,15 @@ export type Order = {
   change_due?: number | null;
   created_by?: string | null;
   created_at: string;
+  updated_at?: string;
   items: OrderItem[];
+  client_order_id?: string | null;
+  device_id?: string | null;
+  version?: number;
+  localId?: string;
+  serverId?: string | null;
+  syncStatus?: SyncStatus;
+  syncError?: string | null;
 };
 
 export type Profile = {
@@ -89,6 +104,14 @@ export type FeatureFlags = {
 export type AppSettings = {
   id: number;
   event_name: string;
+  event_mode: boolean;
+  event_start_date: string | null;
+  event_end_date: string | null;
+  event_location: string;
+  expected_visitors: number;
+  number_stalls: number;
+  number_cashiers: number;
+  number_kitchen_stations: number;
   currency_symbol: string;
   service_day_cutoff_hour: number;
   kitchen_delay_minutes: number;
@@ -112,3 +135,20 @@ export const DEFAULT_FEATURES: FeatureFlags = {
   upiPayment: true,
   posPayment: true,
 };
+
+export const ROLE_LABELS: Record<Role, string> = {
+  owner: 'Owner',
+  manager: 'Manager',
+  cashier: 'Cashier',
+  kitchen: 'Kitchen',
+  runner: 'Runner',
+  viewer: 'Viewer',
+  admin: 'Owner (legacy)',
+  treasurer: 'Viewer (legacy)',
+};
+
+export function canonicalRole(role: Role): Exclude<Role, 'admin' | 'treasurer'> {
+  if (role === 'admin') return 'owner';
+  if (role === 'treasurer') return 'viewer';
+  return role;
+}
