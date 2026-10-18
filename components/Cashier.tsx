@@ -37,10 +37,6 @@ export default function Cashier({ settings }: { settings: AppSettings }) {
   const [msg, setMsg] = useState('');
   const [picking, setPicking] = useState<Product | null>(null);
   const [pickQty, setPickQty] = useState('200');
-  const [customerOpen, setCustomerOpen] = useState(false);
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [customerEmail, setCustomerEmail] = useState('');
 
   const f = settings.features;
   const activeDiscounts = discounts.filter(d => d.active);
@@ -214,14 +210,10 @@ export default function Cashier({ settings }: { settings: AppSettings }) {
       });
       setLast(localOrder);
       setCart([]); setDiscountId(''); setCustomValue(''); setNotes(''); setTokenNo(''); setCovers('1'); setCashReceived('');
-      const successMessage = localOffline ? 'Order saved on this device. Waiting for synchronization.' : 'Order saved locally and synchronization started.';
-      setMsg(successMessage);
-      window.dispatchEvent(new CustomEvent('fooddesk-toast', { detail: { message: successMessage, kind: 'success' } }));
+      setMsg(localOffline ? 'Order saved on this device. Waiting for synchronization.' : 'Order saved locally and synchronization started.');
       void syncNow();
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Could not save order locally';
-      setMsg(errorMessage);
-      window.dispatchEvent(new CustomEvent('fooddesk-toast', { detail: { message: errorMessage, kind: 'error' } }));
+      setMsg(error instanceof Error ? error.message : 'Could not save order locally');
     } finally {
       setPlacing(false);
     }
@@ -237,10 +229,10 @@ export default function Cashier({ settings }: { settings: AppSettings }) {
   }
 
   return <main className="container">
-    <div className="rolebar posHero"><div><span className="eyebrow">FOODDESK • POINT OF SALE</span><h1>Take an order</h1><p className="hint">Choose menu items, review the bill, and send it to the kitchen.</p></div><div className="live statusPill">{localOffline ? <><CloudOff size={14}/> OFFLINE MODE</> : <>● SYSTEM READY</>}</div></div>
+    <div className="rolebar"><div><span>Express POS</span><p className="hint">Tap products → take payment → kitchen gets the order.</p></div><div className="live">{localOffline ? <><CloudOff size={14}/> OFFLINE</> : <>● READY</>}</div></div>
     <div className="grid cashierGrid">
       <section className="card"><div className="sectionHead"><h2>Menu</h2><span className="muted">{products.length} items • touch friendly</span></div><div className="products">{products.map(product => <button className="product" key={product.id} onClick={() => add(product)}><strong>{product.name}</strong><small className="station">{product.category || product.station}</small><span>{money(product.price, settings.currency_symbol)} / {unitLabel(product.unit_type)}</span></button>)}</div>{!products.length && <div className="emptyMini"><p>No cached menu available</p><small>Connect once to download the menu for offline use.</small></div>}</section>
-      <aside className="card cart"><div className="sectionHead"><div><h2>Current order</h2><span className="muted">{cart.length} {cart.length === 1 ? 'item' : 'items'} selected</span></div><div className="cartHeadActions"><button className="secondary customerTrigger" onClick={() => setCustomerOpen(true)}>{customerName ? customerName : '＋ Customer details'}</button>{cart.length > 0 && <button className="iconBtn" title="Clear order" onClick={() => setCart([])}><Trash2 size={17}/></button>}</div></div>
+      <aside className="card cart"><div className="sectionHead"><h2>Current Order</h2>{cart.length > 0 && <button className="iconBtn" title="Clear order" onClick={() => setCart([])}><Trash2 size={17}/></button>}</div>
         {cart.length === 0 ? <div className="emptyMini"><p>No items yet</p><small>Tap a menu item, then enter grams, ml, or pieces.</small></div> : cart.map(item => <div className="cartline" key={item.product.id}><div><b>{item.product.name}</b><div className="muted">{money(item.product.price, settings.currency_symbol)} / {unitLabel(item.product.unit_type)} × {formatQty(item.qty, item.product.unit_type)} = {money(lineAmount(item.product.price, item.qty), settings.currency_symbol)}</div></div><div className="qty"><button onClick={() => changeQty(item.product.id, -1)}><Minus size={15}/></button><input className="qtyInput" aria-label="Quantity" type="number" min="1" step="1" value={toDisplayQty(item.qty, item.product.unit_type)} onChange={e => setQuantityFromDisplay(item.product.id, e.target.value)}/><small>{inputUnit(item.product.unit_type)}</small><button onClick={() => changeQty(item.product.id, 1)}><Plus size={15}/></button></div></div>)}
         <div className="orderMeta tokenRow"><label className="grow">Token number<input className="tokenInput" maxLength={10} value={tokenNo} onChange={e => setTokenNo(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))} placeholder="e.g. 42" /></label></div>
         <div className="orderMeta"><label>Covers<input value={covers} min="1" onChange={e => setCovers(e.target.value)} type="number" /></label><label className="grow">Kitchen note<input maxLength={120} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Less spicy, extra sauce…" /></label></div>
@@ -254,17 +246,6 @@ export default function Cashier({ settings }: { settings: AppSettings }) {
         {msg && <p className={msg.includes('saved') || msg.includes('started') ? 'successText' : 'error'}>{msg}</p>}
       </aside>
     </div>
-    {customerOpen && <div className="modalBackdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setCustomerOpen(false); }}>
-      <section className="customerModal" role="dialog" aria-modal="true" aria-labelledby="customer-modal-title">
-        <div className="modalHeader"><div><span className="eyebrow">ORDER DETAILS</span><h2 id="customer-modal-title">Customer information</h2><p className="hint">Optional details for receipts and customer records.</p></div><button className="iconBtn" aria-label="Close customer details" onClick={() => setCustomerOpen(false)}>✕</button></div>
-        <div className="modalFields">
-          <label>Mobile number<input autoFocus inputMode="tel" value={customerPhone} maxLength={15} onChange={e => setCustomerPhone(e.target.value.replace(/[^0-9+ -]/g, ''))} placeholder="e.g. 98765 43210"/></label>
-          <label>Customer name<input value={customerName} maxLength={80} onChange={e => setCustomerName(e.target.value)} placeholder="Enter customer name"/></label>
-          <label>Email address <span className="muted">(optional)</span><input type="email" value={customerEmail} maxLength={120} onChange={e => setCustomerEmail(e.target.value)} placeholder="name@example.com"/></label>
-        </div>
-        <div className="modalActions"><button className="secondary" onClick={() => { setCustomerName(''); setCustomerPhone(''); setCustomerEmail(''); setCustomerOpen(false); }}>Clear details</button><button className="primary" onClick={() => { setCustomerOpen(false); window.dispatchEvent(new CustomEvent('fooddesk-toast', { detail: { message: 'Customer details saved for this order.', kind: 'success' } })); }}>Save customer</button></div>
-      </section>
-    </div>}
     {picking && <QtyPicker product={picking} currency={settings.currency_symbol} qty={pickQty} onQty={setPickQty} onCancel={() => setPicking(null)} onConfirm={confirmPickedQty} />}
   </main>;
 }

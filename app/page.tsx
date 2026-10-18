@@ -104,7 +104,6 @@ export default function Home() {
   const [settings, setSettings] = useState<AppSettings>(initialSettings);
   const [mode, setMode] = useState<Mode>('cashier');
   const [error, setError] = useState('');
-  const [toast, setToast] = useState<{ message: string; kind: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -153,17 +152,6 @@ export default function Home() {
     return () => { supabase.removeChannel(ch); };
   }, [profile]);
 
-  useEffect(() => {
-    const handleToast = (event: Event) => {
-      const detail = (event as CustomEvent<{ message?: string; kind?: 'success' | 'error' }>).detail;
-      if (!detail?.message) return;
-      setToast({ message: detail.message, kind: detail.kind === 'error' ? 'error' : 'success' });
-      window.setTimeout(() => setToast(null), 4200);
-    };
-    window.addEventListener('fooddesk-toast', handleToast);
-    return () => window.removeEventListener('fooddesk-toast', handleToast);
-  }, []);
-
   useEffect(() => { document.title = `${settings.event_name} • ${mode}`; }, [settings.event_name, mode]);
 
   useEffect(() => {
@@ -195,17 +183,25 @@ export default function Home() {
               ? <Runner settings={settings} />
               : <Station station={mode as 'waffle' | 'chole' | 'pav'} settings={settings} />;
 
-  return <div className="app">
-    {toast && <div className={`headerToast ${toast.kind}`} role="status" aria-live="polite"><span className="toastIcon">{toast.kind === 'success' ? '✓' : '!'}</span><span>{toast.message}</span><button aria-label="Dismiss notification" onClick={() => setToast(null)}>×</button></div>}
-    <header className="topbar">
-      <div className="brandBlock"><div className="brand">🍴 {settings.event_name}</div><div className="subtitle">POS that just works. • {roleLabel}</div></div>
-      <div className="userActions">
-        <SyncBanner />
-        <nav className="tabs top-tabs">{modes.map(k => <button key={k} className={'tab ' + (mode === k ? 'active' : '')} onClick={() => setMode(k)}>{k === 'admin' ? 'Manage' : k === 'orders' ? 'Orders' : k === 'runner' ? 'Runner' : k === 'waffle' ? 'Waffle' : k === 'chole' ? 'Chole' : k === 'pav' ? 'Pav' : k === 'organizations' ? 'Organizations' : k.charAt(0).toUpperCase() + k.slice(1)}</button>)}</nav>
-        <button className="avatar" title="Sign out" onClick={() => supabase.auth.signOut()}>{profile.display_name.slice(0, 1).toUpperCase()}</button>
-      </div>
+  const modeLabel = (k: Mode) => k === 'admin' ? 'Settings & Management' : k === 'orders' ? 'Orders' : k === 'runner' ? 'Order Runner' : k === 'waffle' ? 'Waffle Station' : k === 'chole' ? 'Chole Station' : k === 'pav' ? 'Pav Station' : k === 'organizations' ? 'Organizations' : k.charAt(0).toUpperCase() + k.slice(1);
+  const modeIcon = (k: Mode) => ({ cashier: '▦', dashboard: '▥', orders: '☷', kitchen: '♨', runner: '➜', admin: '⚙', organizations: '⌂', waffle: '◈', chole: '◉', pav: '◇' }[k] ?? '•');
+  return <div className="app materializeApp">
+    <header className="topbar materialTopbar">
+      <div className="brandBlock"><div className="brand"><span className="brandMark">F</span><span>{settings.event_name}</span></div><div className="subtitle">Restaurant operations platform</div></div>
+      <div className="topbarRight"><div className="breadcrumbText">Workspace <span>/</span> {modeLabel(mode)}</div><SyncBanner /><div className="profileMenu"><div className="profileAvatar">{profile.display_name.slice(0, 1).toUpperCase()}</div><div className="profileCopy"><strong>{profile.display_name}</strong><span>{roleLabel}</span></div><button className="signOutBtn" title="Sign out" onClick={() => supabase.auth.signOut()}>↪</button></div></div>
     </header>
-    {error && <div className="container"><div className="offlineNotice">{error}</div></div>}
-    {content}
+    <div className="materialShell">
+      <aside className="materialSidebar">
+        <div className="sidebarCaption">WORKSPACE</div>
+        <nav className="sideNav">{modes.map(k => <button key={k} className={'sideNavItem ' + (mode === k ? 'active' : '')} onClick={() => setMode(k)}><span className="sideNavIcon">{modeIcon(k)}</span><span>{modeLabel(k)}</span>{mode === k && <span className="navActiveDot" />}</button>)}</nav>
+        <div className="sidebarBottom"><div className="sidebarHelpIcon">?</div><div><strong>Need help?</strong><span>Manage your shift with FoodDesk.</span></div></div>
+        <div className="sidebarVersion">FOODDESK POS · V4</div>
+      </aside>
+      <main className="materialMain">
+        <div className="pageTitleRow"><div><div className="pageEyebrow">{settings.event_name} WORKSPACE</div><h1>{modeLabel(mode)}</h1><p>Manage your restaurant operations from one place.</p></div><div className="pageTitleActions"><span className="workspaceStatus"><i /> Workspace active</span></div></div>
+        {error && <div className="container"><div className="offlineNotice">{error}</div></div>}
+        {content}
+      </main>
+    </div>
   </div>;
 }
