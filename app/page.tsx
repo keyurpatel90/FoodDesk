@@ -104,6 +104,7 @@ export default function Home() {
   const [settings, setSettings] = useState<AppSettings>(initialSettings);
   const [mode, setMode] = useState<Mode>('cashier');
   const [error, setError] = useState('');
+  const [toast, setToast] = useState<{ message: string; kind: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -152,6 +153,17 @@ export default function Home() {
     return () => { supabase.removeChannel(ch); };
   }, [profile]);
 
+  useEffect(() => {
+    const handleToast = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string; kind?: 'success' | 'error' }>).detail;
+      if (!detail?.message) return;
+      setToast({ message: detail.message, kind: detail.kind === 'error' ? 'error' : 'success' });
+      window.setTimeout(() => setToast(null), 4200);
+    };
+    window.addEventListener('fooddesk-toast', handleToast);
+    return () => window.removeEventListener('fooddesk-toast', handleToast);
+  }, []);
+
   useEffect(() => { document.title = `${settings.event_name} • ${mode}`; }, [settings.event_name, mode]);
 
   useEffect(() => {
@@ -184,6 +196,7 @@ export default function Home() {
               : <Station station={mode as 'waffle' | 'chole' | 'pav'} settings={settings} />;
 
   return <div className="app">
+    {toast && <div className={`headerToast ${toast.kind}`} role="status" aria-live="polite"><span className="toastIcon">{toast.kind === 'success' ? '✓' : '!'}</span><span>{toast.message}</span><button aria-label="Dismiss notification" onClick={() => setToast(null)}>×</button></div>}
     <header className="topbar">
       <div className="brandBlock"><div className="brand">🍴 {settings.event_name}</div><div className="subtitle">POS that just works. • {roleLabel}</div></div>
       <div className="userActions">
