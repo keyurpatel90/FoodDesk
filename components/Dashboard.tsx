@@ -1,17 +1,55 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Download, RefreshCw } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, Banknote, BellRing, ChefHat, CloudOff, Cookie, CreditCard, Download, ReceiptText, RefreshCw, Sandwich, Smartphone, Soup, TrendingUp, Trophy, UtensilsCrossed, Users, Wallet, type LucideIcon } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getLocalOrders } from '@/lib/offline';
 import { mergeOrders } from '@/lib/order-merge';
 import type { AppSettings, Order } from '@/lib/types';
-import { csvEscape, money } from '@/lib/format';
+import { compact, csvEscape, money } from '@/lib/format';
+import { Bars, Donut, Sparkline, TrendChart } from '@/components/Charts';
 
-export default function Dashboard({ settings }: { settings: AppSettings }) {
+type Bucket = { key: string; label: string; sales: number; orders: number; profit: number };
+type Metric = 'sales' | 'orders' | 'profit';
+type NavTarget = 'orders' | 'runner' | 'cashier';
+
+const hourLabel = (h: number) => `${h % 12 || 12}${h < 12 ? 'am' : 'pm'}`;
+const dayLabel = (day: string) => {
+  const d = new Date(`${day}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? day : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+};
+const orderCost = (o: Order) => o.items.filter(i => i.status !== 'cancelled').reduce((s, i) => s + Number(i.food_cost ?? 0) * Number(i.qty), 0);
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+const PAYMENT: Record<string, { label: string; icon: LucideIcon; color: string; tone: string }> = {
+  cash: { label: 'Cash', icon: Banknote, color: '#72e128', tone: 't-success' },
+  upi: { label: 'UPI', icon: Smartphone, color: '#666cff', tone: 't-primary' },
+  pos: { label: 'Card', icon: CreditCard, color: '#26c6f9', tone: 't-info' },
+};
+const STATION_ICON: Record<string, LucideIcon> = { waffle: Cookie, chole: Soup, pav: Sandwich };
+const STATUS_TONE: Record<string, string> = { new: 't-info', preparing: 't-warning', ready: 't-success', delivered: 't-primary', completed: 't-primary', cancelled: 't-danger' };
+
+function Delta({ value }: { value: number | null }) {
+  if (value === null || !Number.isFinite(value)) return null;
+  const up = value >= 0;
+  return <span className={'delta ' + (up ? 'up' : 'down')} title="Latest service day vs the day before">{up ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}{Math.abs(Math.round(value))}%</span>;
+}
+
+function Kpi({ icon: Icon, tone, label, value, sub, delta, spark }: { icon: LucideIcon; tone: string; label: string; value: string; sub?: string; delta: number | null; spark: number[] }) {
+  return <section className={'card kpi ' + tone}>
+    <div className="kpiTop"><span className="tonal"><Icon size={20} /></span><Delta value={delta} /></div>
+    <div className="kpiValue">{value}</div>
+    <div className="kpiLabel">{label}</div>
+    {sub && <div className="kpiSub">{sub}</div>}
+    <Sparkline values={spark} />
+  </section>;
+}
+
+export default function Dashboard({ settings, userName, nav }: { settings: AppSettings; userName?: string; nav?: Partial<Record<NavTarget, () => void>> }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [serviceDay, setServiceDay] = useState('');
+  const [metric, setMetric] = useState<Metric>('sales');
 
   useEffect(() => {
     void load();
@@ -46,29 +84,103 @@ export default function Dashboard({ settings }: { settings: AppSettings }) {
     }
   }
 
-  const filtered = serviceDay ? orders.filter(order => order.service_day === serviceDay) : orders;
-  const active = filtered.filter(order => order.status !== 'cancelled');
-  const revenue = active.reduce((sum, order) => sum + Number(order.total), 0);
-  const foodCost = active.reduce((sum, order) => sum + order.items.filter(item => item.status !== 'cancelled').reduce((inner, item) => inner + Number(item.food_cost ?? 0) * Number(item.qty), 0), 0);
-  const grossProfit = Math.max(0, revenue - foodCost);
-  const margin = revenue ? (grossProfit / revenue) * 100 : 0;
-  const covers = active.reduce((sum, order) => sum + Number(order.covers || 1), 0);
-  const pending = active.filter(order => order.status === 'new').length;
-  const preparing = active.filter(order => order.status === 'preparing').length;
-  const ready = active.filter(order => order.status === 'ready').length;
-  const delivered = active.filter(order => order.status === 'delivered' || order.status === 'completed').length;
-  const itemCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    active.forEach(order => order.items.forEach(item => {
-      if (item.status !== 'cancelled') counts[item.product_name] = (counts[item.product_name] ?? 0) + Number(item.qty);
+  const sym = settings.currency_symbol;
+  const cutoff = settings.service_day_cutoff_hour ?? 5;
+  const filtered = useMemo(() => serviceDay ? orders.filter(order => order.service_day === serviceDay) : orders, [orders, serviceDay]);
+  const active = useMemo(() => filtered.filter(order => order.status !== 'cancelled'), [filtered]);
+
+  const totals = useMemo(() => {
+    const revenue = active.reduce((sum, o) => sum + Number(o.total), 0);
+    const foodCost = active.reduce((sum, o) => sum + orderCost(o), 0);
+    const grossProfit = Math.max(0, revenue - foodCost);
+    const covers = active.reduce((sum, o) => sum + Number(o.covers || 1), 0);
+    return { revenue, foodCost, grossProfit, covers, margin: revenue ? (grossProfit / revenue) * 100 : 0 };
+  }, [active]);
+  const { revenue, foodCost, grossProfit, covers, margin } = totals;
+
+  const pipeline = useMemo(() => {
+    const count = (...s: Order['status'][]) => active.filter(o => s.includes(o.status)).length;
+    return [
+      { key: 'new', label: 'New', tone: 't-info', value: count('new') },
+      { key: 'preparing', label: 'Preparing', tone: 't-warning', value: count('preparing') },
+      { key: 'ready', label: 'Ready', tone: 't-success', value: count('ready') },
+      { key: 'delivered', label: 'Delivered', tone: 't-primary', value: count('delivered', 'completed') },
+    ];
+  }, [active]);
+  const ready = pipeline[2].value;
+
+  const hourly = useMemo<Bucket[]>(() => {
+    if (!active.length) return [];
+    const per: Record<number, Bucket> = {};
+    const blank = (k: number): Bucket => ({ key: String(k), label: hourLabel((k + cutoff) % 24), sales: 0, orders: 0, profit: 0 });
+    active.forEach(o => {
+      const k = (new Date(o.created_at).getHours() - cutoff + 24) % 24;
+      const b = (per[k] ??= blank(k));
+      b.sales += Number(o.total); b.orders += 1; b.profit += Number(o.total) - orderCost(o);
+    });
+    const ks = Object.keys(per).map(Number);
+    let lo = Math.min(...ks), hi = Math.max(...ks);
+    while (hi - lo + 1 < 6) { if (hi < 23) hi++; else if (lo > 0) lo--; else break; }
+    const out: Bucket[] = [];
+    for (let k = lo; k <= hi; k++) out.push(per[k] ?? blank(k));
+    return out;
+  }, [active, cutoff]);
+
+  const daily = useMemo<Bucket[]>(() => {
+    const days = Array.from(new Set(active.map(o => o.service_day))).sort().slice(-10);
+    return days.map(day => {
+      const list = active.filter(o => o.service_day === day);
+      const sales = list.reduce((s, o) => s + Number(o.total), 0);
+      return { key: day, label: dayLabel(day), sales, orders: list.length, profit: sales - list.reduce((s, o) => s + orderCost(o), 0) };
+    });
+  }, [active]);
+
+  const byDay = !serviceDay && daily.length >= 2;
+  const trend = byDay ? daily : hourly;
+  const delta = (pick: (b: Bucket) => number) => {
+    if (!byDay) return null;
+    const prev = pick(daily[daily.length - 2]);
+    return prev ? ((pick(daily[daily.length - 1]) - prev) / prev) * 100 : null;
+  };
+  const series = (k: Metric) => trend.map(b => b[k]);
+
+  const items = useMemo(() => {
+    const stats: Record<string, { qty: number; rev: number }> = {};
+    active.forEach(o => o.items.forEach(i => {
+      if (i.status === 'cancelled') return;
+      const s = (stats[i.product_name] ??= { qty: 0, rev: 0 });
+      s.qty += Number(i.qty); s.rev += Number(i.price) * Number(i.qty);
     }));
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    return Object.entries(stats).map(([name, s]) => ({ name, ...s })).sort((a, b) => b.rev - a.rev);
   }, [active]);
+  const topItem = items[0];
+  const itemTotal = items.reduce((s, i) => s + i.rev, 0);
+
   const payment = useMemo(() => {
-    const totals: Record<string, number> = {};
-    active.forEach(order => totals[order.payment_method] = (totals[order.payment_method] ?? 0) + Number(order.total));
-    return Object.entries(totals).sort((a, b) => b[1] - a[1]);
+    const t: Record<string, number> = {};
+    active.forEach(o => { t[o.payment_method] = (t[o.payment_method] ?? 0) + Number(o.total); });
+    return Object.entries(t).sort((a, b) => b[1] - a[1]);
   }, [active]);
+
+  const stations = useMemo(() => {
+    const s: Record<string, { total: number; done: number }> = {};
+    active.forEach(o => o.items.forEach(i => {
+      if (i.status === 'cancelled') return;
+      const row = (s[i.station] ??= { total: 0, done: 0 });
+      row.total += 1; if (i.status === 'done') row.done += 1;
+    }));
+    return Object.entries(s).sort((a, b) => b[1].total - a[1].total);
+  }, [active]);
+
+  const peak = hourly.length ? hourly.reduce((a, b) => (b.orders > a.orders ? b : a)) : null;
+  const offline = typeof navigator !== 'undefined' && !navigator.onLine;
+  const first = userName?.trim().split(' ')[0];
+  const metricMeta: Record<Metric, { label: string; format: (n: number) => string; axis: (n: number) => string; min: number }> = {
+    sales: { label: 'Sales', format: n => money(n, sym), axis: n => `${sym}${compact(n)}`, min: 0 },
+    profit: { label: 'Profit', format: n => money(n, sym), axis: n => `${sym}${compact(n)}`, min: 0 },
+    orders: { label: 'Orders', format: n => `${Math.round(n)} order${Math.round(n) === 1 ? '' : 's'}`, axis: n => String(Math.round(n)), min: 4 },
+  };
+  const m = metricMeta[metric];
 
   function exportCsv() {
     const rows: string[][] = [['Order', 'Service Day', 'Status', 'Subtotal', 'Discount', 'Total', 'Food Cost', 'Gross Profit', 'Payment', 'Covers', 'Token', 'Created At']];
@@ -81,12 +193,100 @@ export default function Dashboard({ settings }: { settings: AppSettings }) {
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `fooddesk-${serviceDay || 'orders'}.csv`; a.click(); URL.revokeObjectURL(url);
   }
 
-  return <main className="container">
-    <div className="rolebar"><div><span>{settings.event_mode ? 'Event Dashboard' : 'Business Dashboard'}</span><p className="hint">{settings.event_name}{settings.event_location ? ` • ${settings.event_location}` : ''}</p></div><div className="toolbar"><input type="date" value={serviceDay} onChange={e => setServiceDay(e.target.value)} /><button className="secondary" onClick={() => void load()}><RefreshCw size={16}/> Refresh</button>{settings.features.reports && <button className="secondary" onClick={exportCsv}><Download size={16}/> CSV</button>}</div></div>
-    {settings.event_mode && <section className="eventStrip"><b>{settings.event_name}</b><span>{settings.expected_visitors ? `Expected ${settings.expected_visitors.toLocaleString()} visitors` : 'Visitor target not set'}</span><span>{settings.number_stalls} stall{settings.number_stalls !== 1 ? 's' : ''}</span><span>{settings.number_cashiers} cashier{settings.number_cashiers !== 1 ? 's' : ''}</span><span>{settings.number_kitchen_stations} kitchen station{settings.number_kitchen_stations !== 1 ? 's' : ''}</span></section>}
-    <div className="stats"><div className="stat"><span>Sales</span><b>{money(revenue, settings.currency_symbol)}</b></div><div className="stat"><span>Orders</span><b>{active.length}</b></div><div className="stat"><span>Gross Profit</span><b>{money(grossProfit, settings.currency_symbol)}</b></div><div className="stat"><span>Gross Margin</span><b>{margin.toFixed(1)}%</b></div></div>
-    <div className="stats smallStats sectionSpace"><div className="stat"><span>Food Cost</span><b>{money(foodCost, settings.currency_symbol)}</b></div><div className="stat"><span>Avg / Cover</span><b>{money(covers ? Math.round(revenue / covers) : 0, settings.currency_symbol)}</b></div><div className="stat"><span>Pending / Preparing</span><b>{pending} / {preparing}</b></div><div className="stat"><span>Ready / Delivered</span><b>{ready} / {delivered}</b></div></div>
-    <div className="twocol sectionSpace"><section className="card"><h3>Payment Mix</h3>{payment.map(([method, total]) => <div className="salesline" key={method}><b>{method.toUpperCase()}</b><span>{money(total, settings.currency_symbol)}</span></div>)}{ready > 0 && <div className="callout successBg">{ready} order{ready === 1 ? '' : 's'} ready for pickup.</div>}</section><section className="card"><h3>Top Items</h3>{itemCounts.slice(0, 12).map(([name, qty]) => <div className="salesline" key={name}><b>{name}</b><span>{qty}</span></div>)}{!itemCounts.length && <div className="emptyMini">No sales yet.</div>}</section></div>
-    <section className="card"><div className="sectionHead"><h3>Recent Orders</h3><span className="muted">{loading ? 'Loading…' : `${filtered.length} in view`}</span></div>{filtered.slice(0, 30).map(order => <div className="cartline" key={order.localId ?? order.id}><div><b>#{order.order_no < 0 ? `LOCAL-${Math.abs(order.order_no)}` : order.order_no}</b><small>{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {order.covers || 1} cover{(order.covers || 1) !== 1 ? 's' : ''}</small></div><span>{money(order.total, settings.currency_symbol)}</span><span className={'status ' + order.status}>{order.status}</span></div>)}</section>
+  const visitorPct = settings.event_mode && settings.expected_visitors > 0 ? Math.min(100, Math.round((covers / settings.expected_visitors) * 100)) : null;
+
+  return <main className="container" aria-busy={loading}>
+    <div className="pageHead">
+      <div>
+        <h1>{settings.event_mode ? 'Event dashboard' : 'Business dashboard'}</h1>
+        <p className="hint">{settings.event_name}{settings.event_location ? ` • ${settings.event_location}` : ''} {offline ? <span className="live off"><CloudOff size={13} /> Offline, showing this device</span> : <span className="live">● Live</span>}</p>
+      </div>
+      <div className="toolbar">
+        <input type="date" aria-label="Service day" value={serviceDay} onChange={e => setServiceDay(e.target.value)} />
+        <button className="secondary" onClick={() => void load()}><RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh</button>
+        {settings.features.reports && <button className="secondary" onClick={exportCsv}><Download size={16} /> CSV</button>}
+      </div>
+    </div>
+
+    <div className="dash">
+      <section className="card hero">
+        <div className="heroText">
+          {topItem ? <>
+            <h3>Great service{first ? `, ${first}` : ''}! 🎉</h3>
+            <p className="muted">Best seller {serviceDay ? `on ${dayLabel(serviceDay)}` : 'so far'}</p>
+            <div className="heroName">{topItem.name}</div>
+            <p className="heroSub">{Number(topItem.qty.toFixed(2))} sold • {itemTotal ? Math.round((topItem.rev / itemTotal) * 100) : 0}% of sales</p>
+            {nav?.orders && <button className="primary small" onClick={nav.orders}>View orders</button>}
+          </> : <>
+            <h3>Ready for service{first ? `, ${first}` : ''}</h3>
+            <p className="muted">No sales {serviceDay ? 'on this day' : 'yet'}. New orders appear here the moment they are placed.</p>
+            {nav?.cashier && <button className="primary small" onClick={nav.cashier}>Open cashier</button>}
+          </>}
+          {visitorPct !== null && <div className="heroVisitors">
+            <div className="rowBetween"><span>Visitors served</span><b>{covers.toLocaleString('en-IN')} / {settings.expected_visitors.toLocaleString('en-IN')}</b></div>
+            <div className="track" role="progressbar" aria-valuenow={visitorPct} aria-valuemin={0} aria-valuemax={100} aria-label="Visitors served"><i style={{ width: `${visitorPct}%` }} /></div>
+          </div>}
+        </div>
+        <span className="heroTrophy" aria-hidden="true"><Trophy size={46} /></span>
+      </section>
+
+      <div className="kpis">
+        <Kpi icon={Wallet} tone="t-primary" label="Sales" value={money(revenue, sym)} delta={delta(b => b.sales)} spark={series('sales')} />
+        <Kpi icon={ReceiptText} tone="t-info" label="Orders" value={String(active.length)} sub={`${covers} cover${covers === 1 ? '' : 's'}`} delta={delta(b => b.orders)} spark={series('orders')} />
+        <Kpi icon={TrendingUp} tone="t-success" label="Gross profit" value={money(grossProfit, sym)} sub={`${margin.toFixed(1)}% margin • food cost ${money(foodCost, sym)}`} delta={delta(b => b.profit)} spark={series('profit')} />
+        <Kpi icon={Users} tone="t-warning" label="Average per cover" value={money(covers ? Math.round(revenue / covers) : 0, sym)} sub={active.length ? `${money(Math.round(revenue / active.length), sym)} per order` : undefined} delta={null} spark={trend.map(b => (b.orders ? b.sales / b.orders : 0))} />
+      </div>
+
+      <section className="card trend">
+        <div className="cardHead">
+          <div><h3>{byDay ? 'Sales by day' : 'Sales by hour'}</h3><p className="hint">{byDay ? 'Last 10 service days' : serviceDay ? dayLabel(serviceDay) : 'Across the event so far'}</p></div>
+          <div className="pills" role="tablist" aria-label="Chart metric">{(['sales', 'orders', 'profit'] as Metric[]).map(k => <button key={k} role="tab" aria-selected={metric === k} className={'pill' + (metric === k ? ' on' : '')} onClick={() => setMetric(k)}>{metricMeta[k].label}</button>)}</div>
+        </div>
+        {trend.length ? <TrendChart labels={trend.map(b => b.label)} values={series(metric)} format={m.format} axisFormat={m.axis} minMax={m.min} ariaLabel={`${m.label} ${byDay ? 'by day' : 'by hour'}`} /> : <div className="emptyMini"><p>No sales to chart yet.</p></div>}
+      </section>
+
+      <section className="card pipe">
+        <div className="cardHead"><div><h3>Order pipeline</h3><p className="hint">{active.length} active order{active.length === 1 ? '' : 's'}</p></div></div>
+        <div className="stack100" aria-hidden="true">{active.length ? pipeline.map(p => p.value > 0 && <i key={p.key} className={p.tone} style={{ flexGrow: p.value }} />) : <i className="empty" />}</div>
+        <ul className="legend">{pipeline.map(p => <li key={p.key} className={p.tone}><span className="dot" /><span>{p.label}</span><b>{p.value}</b><small>{active.length ? Math.round((p.value / active.length) * 100) : 0}%</small></li>)}</ul>
+        {ready > 0 && <div className="readyCall"><BellRing size={18} /><span>{ready} order{ready === 1 ? '' : 's'} ready for pickup</span>{nav?.runner && <button className="linkBtn" onClick={nav.runner}>Open runner</button>}</div>}
+      </section>
+
+      <section className="card third">
+        <div className="cardHead"><div><h3>Payment mix</h3><p className="hint">Share of sales</p></div></div>
+        {payment.length ? <>
+          <div className="donutRow"><Donut label="Sales by payment method" segments={payment.map(([k, v]) => ({ label: k, value: v, color: PAYMENT[k]?.color ?? '#6d788d' }))}><b>{money(revenue, sym)}</b><small>total</small></Donut></div>
+          <ul className="rows">{payment.map(([k, v]) => { const p = PAYMENT[k] ?? { label: k.toUpperCase(), icon: Wallet, tone: 't-secondary' }; const Icon = p.icon; return <li key={k} className={p.tone}><span className="tonal sm"><Icon size={16} /></span><span className="grow">{p.label}</span><b>{money(v, sym)}</b><small>{revenue ? Math.round((v / revenue) * 100) : 0}%</small></li>; })}</ul>
+        </> : <div className="emptyMini"><p>No payments yet.</p></div>}
+      </section>
+
+      <section className="card third">
+        <div className="cardHead"><div><h3>Peak hours</h3><p className="hint">{peak && peak.orders ? `Busiest at ${peak.label} with ${peak.orders} order${peak.orders === 1 ? '' : 's'}` : 'Orders per hour'}</p></div></div>
+        {hourly.length ? <Bars ariaLabel="Orders per hour" items={hourly.map(b => ({ label: b.label, value: b.orders, hint: `${b.label}: ${b.orders} order${b.orders === 1 ? '' : 's'}, ${money(b.sales, sym)}` }))} /> : <div className="emptyMini"><p>Busy hours show up after the first orders.</p></div>}
+      </section>
+
+      <section className="card third">
+        <div className="cardHead"><div><h3>Kitchen stations</h3><p className="hint">Items finished</p></div></div>
+        {stations.length ? <ul className="rows">{stations.map(([k, s]) => { const Icon = STATION_ICON[k] ?? UtensilsCrossed; const pct = s.total ? Math.round((s.done / s.total) * 100) : 0; return <li key={k} className="stationRow t-primary"><span className="tonal sm"><Icon size={16} /></span><div className="grow"><div className="rowBetween"><span>{cap(k)}</span><small>{s.done} / {s.total} done</small></div><div className="track" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`${cap(k)} items finished`}><i style={{ width: `${pct}%` }} /></div></div></li>; })}</ul> : <div className="emptyMini"><ChefHat size={22} /><p>No kitchen activity yet.</p></div>}
+      </section>
+
+      <section className="card recent">
+        <div className="cardHead"><div><h3>Recent orders</h3><p className="hint">{loading ? 'Loading…' : `${filtered.length} in view`}</p></div>{nav?.orders && <button className="secondary small" onClick={nav.orders}>View all</button>}</div>
+        {filtered.length ? <table className="tbl"><thead><tr><th>Order</th><th className="c-covers">Covers</th><th className="c-pay">Payment</th><th className="num">Total</th><th>Status</th></tr></thead><tbody>
+          {filtered.slice(0, 12).map(order => { const pay = PAYMENT[order.payment_method]; return <tr key={order.localId ?? order.id}>
+            <td><b>#{order.order_no < 0 ? `LOCAL-${Math.abs(order.order_no)}` : order.order_no}</b>{order.token_no && <span className="chip t-warning tok">Token {order.token_no}</span>}<small className="when">{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></td>
+            <td className="c-covers">{order.covers || 1}</td>
+            <td className="c-pay">{pay ? pay.label : order.payment_method.toUpperCase()}</td>
+            <td className="num"><b>{money(order.total, sym)}</b></td>
+            <td><span className={'chip ' + (STATUS_TONE[order.status] ?? 't-secondary')}>{cap(order.status)}</span></td>
+          </tr>; })}
+        </tbody></table> : <div className="emptyMini"><p>No orders yet.</p></div>}
+      </section>
+
+      <section className="card top">
+        <div className="cardHead"><div><h3>Top items</h3><p className="hint">By sales value</p></div></div>
+        {items.length ? <ul className="rows">{items.slice(0, 7).map((it, i) => <li key={it.name} className="topRow t-primary"><span className="rank">{i + 1}</span><div className="grow"><div className="rowBetween"><span className="clip">{it.name}</span><b>{money(it.rev, sym)}</b></div><div className="track" aria-hidden="true"><i style={{ width: `${items[0].rev ? (it.rev / items[0].rev) * 100 : 0}%` }} /></div><small>{Number(it.qty.toFixed(2))} sold</small></div></li>)}</ul> : <div className="emptyMini"><p>No sales yet.</p></div>}
+      </section>
+    </div>
   </main>;
 }

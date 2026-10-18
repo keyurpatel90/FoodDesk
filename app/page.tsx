@@ -11,7 +11,7 @@ import Admin from '@/components/Admin';
 import Orders from '@/components/Orders';
 import Station from '@/components/Station';
 import Runner from '@/components/Runner';
-import SyncBanner from '@/components/SyncBanner';
+import Shell from '@/components/Shell';
 import { supabase } from '@/lib/supabase';
 import { cacheSnapshot, getCachedProfile, getCachedSettings, installSyncListeners, syncNow } from '@/lib/offline';
 import type { AppSettings, FeatureFlags, Profile, Role } from '@/lib/types';
@@ -174,7 +174,7 @@ export default function Home() {
     : mode === 'kitchen'
       ? <Kitchen settings={settings} />
       : mode === 'dashboard'
-        ? <Dashboard settings={settings} />
+        ? <Dashboard settings={settings} userName={profile.display_name} nav={{ orders: modes.includes('orders') ? () => setMode('orders') : undefined, runner: modes.includes('runner') ? () => setMode('runner') : undefined, cashier: modes.includes('cashier') ? () => setMode('cashier') : undefined }} />
         : mode === 'orders'
           ? <Orders settings={settings} profile={profile} />
           : mode === 'admin'
@@ -183,25 +183,8 @@ export default function Home() {
               ? <Runner settings={settings} />
               : <Station station={mode as 'waffle' | 'chole' | 'pav'} settings={settings} />;
 
-  const modeLabel = (k: Mode) => k === 'admin' ? 'Settings & Management' : k === 'orders' ? 'Orders' : k === 'runner' ? 'Order Runner' : k === 'waffle' ? 'Waffle Station' : k === 'chole' ? 'Chole Station' : k === 'pav' ? 'Pav Station' : k === 'organizations' ? 'Organizations' : k.charAt(0).toUpperCase() + k.slice(1);
-  const modeIcon = (k: Mode) => ({ cashier: '▦', dashboard: '▥', orders: '☷', kitchen: '♨', runner: '➜', admin: '⚙', organizations: '⌂', waffle: '◈', chole: '◉', pav: '◇' }[k] ?? '•');
-  return <div className="app materializeApp">
-    <header className="topbar materialTopbar">
-      <div className="brandBlock"><div className="brand"><span className="brandMark">F</span><span>{settings.event_name}</span></div><div className="subtitle">Restaurant operations platform</div></div>
-      <div className="topbarRight"><div className="breadcrumbText">Workspace <span>/</span> {modeLabel(mode)}</div><SyncBanner /><div className="profileMenu"><div className="profileAvatar">{profile.display_name.slice(0, 1).toUpperCase()}</div><div className="profileCopy"><strong>{profile.display_name}</strong><span>{roleLabel}</span></div><button className="signOutBtn" title="Sign out" onClick={() => supabase.auth.signOut()}>↪</button></div></div>
-    </header>
-    <div className="materialShell">
-      <aside className="materialSidebar">
-        <div className="sidebarCaption">WORKSPACE</div>
-        <nav className="sideNav">{modes.map(k => <button key={k} className={'sideNavItem ' + (mode === k ? 'active' : '')} onClick={() => setMode(k)}><span className="sideNavIcon">{modeIcon(k)}</span><span>{modeLabel(k)}</span>{mode === k && <span className="navActiveDot" />}</button>)}</nav>
-        <div className="sidebarBottom"><div className="sidebarHelpIcon">?</div><div><strong>Need help?</strong><span>Manage your shift with FoodDesk.</span></div></div>
-        <div className="sidebarVersion">FOODDESK POS · V4</div>
-      </aside>
-      <main className="materialMain">
-        <div className="pageTitleRow"><div><div className="pageEyebrow">{settings.event_name} WORKSPACE</div><h1>{modeLabel(mode)}</h1><p>Manage your restaurant operations from one place.</p></div><div className="pageTitleActions"><span className="workspaceStatus"><i /> Workspace active</span></div></div>
-        {error && <div className="container"><div className="offlineNotice">{error}</div></div>}
-        {content}
-      </main>
-    </div>
-  </div>;
+  return <Shell brand={settings.event_name} roleLabel={roleLabel} userName={profile.display_name} modes={modes} mode={mode} onMode={next => setMode(next as Mode)} onSignOut={() => { void supabase.auth.signOut(); }}>
+    {error && <div className="container"><div className="offlineNotice">{error}</div></div>}
+    {content}
+  </Shell>;
 }

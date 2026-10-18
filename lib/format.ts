@@ -47,3 +47,13 @@ export function lineAmount(price: number, qty: number): number {
 export function invoiceItemText(name: string, qty: number, price: number, unit: ProductUnit | null | undefined, symbol: string): string {
   return `${formatQty(qty, unit)} × ${name} (${money(price, symbol)}/${unitLabel(unit)})`;
 }
+
+export function compact(value: number): string {
+  const n = Math.abs(Number(value) || 0);
+  const sign = Number(value) < 0 ? '-' : '';
+  const trim = (x: number) => String(Number(x.toFixed(1)));
+  if (n >= 1e7) return `${sign}${trim(n / 1e7)}Cr`;
+  if (n >= 1e5) return `${sign}${trim(n / 1e5)}L`;
+  if (n >= 1e3) return `${sign}${trim(n / 1e3)}k`;
+  return `${sign}${Math.round(n)}`;
+}
