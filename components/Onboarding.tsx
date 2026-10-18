@@ -25,6 +25,9 @@ export default function Onboarding({
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const [organizationName, setOrganizationName] = useState('');
+  const [outletName, setOutletName] = useState('Main Outlet');
+  const [outletCode, setOutletCode] = useState('MAIN');
   const [event, setEvent] = useState({
     name: settings.event_name,
     start: settings.event_start_date || '',
@@ -65,8 +68,14 @@ export default function Onboarding({
         .select('organization_id,outlet_id')
         .eq('id', user.id)
         .single();
-      const org = profile?.organization_id;
-      const outlet = profile?.outlet_id;
+      let org = profile?.organization_id as string | null | undefined;
+      let outlet = profile?.outlet_id as string | null | undefined;
+      if (!org || !outlet) {
+        const { data: created, error: createError } = await supabase.rpc('create_organization_with_outlet', { p_organization_name: organizationName.trim() || `${user.email?.split('@')[0] || 'My'} Organization`, p_outlet_name: outletName.trim() || 'Main Outlet', p_outlet_code: outletCode.trim().toUpperCase() || 'MAIN' });
+        if (createError) throw createError;
+        org = created?.organization_id; outlet = created?.outlet_id;
+      }
+      if (!org || !outlet) throw new Error('Organization and outlet could not be created. Apply the FoodDesk multi-tenant SQL migration and try again.');
 
       const payload = {
         event_name: event.name || 'FoodDesk Event',
@@ -84,7 +93,8 @@ export default function Onboarding({
       const { data: s, error } = await supabase
         .from('app_settings')
         .update(payload)
-        .eq('id', 1)
+        .eq('organization_id', org)
+        .eq('outlet_id', outlet)
         .select()
         .single();
       if (error) throw error;
@@ -137,6 +147,9 @@ export default function Onboarding({
           <div className="wizardBody">
             <h1>Tell us about the event</h1>
             <div className="formgrid wide">
+              <label>Organization name<input value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} placeholder="Your business / organization" /></label>
+              <label>First outlet name<input value={outletName} onChange={(e) => setOutletName(e.target.value)} /></label>
+              <label>Outlet code<input value={outletCode} onChange={(e) => setOutletCode(e.target.value.toUpperCase())} maxLength={12} /></label>
               <label>
                 Event name
                 <input value={event.name} onChange={(e) => setEvent({ ...event, name: e.target.value })} />

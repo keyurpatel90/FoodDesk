@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Auth from '@/components/Auth';
+import Onboarding from '@/components/Onboarding';
+import OrganizationAdmin from '@/components/OrganizationAdmin';
 import Cashier from '@/components/Cashier';
 import Kitchen from '@/components/Kitchen';
 import Dashboard from '@/components/Dashboard';
@@ -15,7 +17,7 @@ import { cacheSnapshot, getCachedProfile, getCachedSettings, installSyncListener
 import type { AppSettings, FeatureFlags, Profile, Role } from '@/lib/types';
 import { DEFAULT_FEATURES, canonicalRole, ROLE_LABELS } from '@/lib/types';
 
-export type Mode = 'cashier' | 'kitchen' | 'dashboard' | 'orders' | 'admin' | 'runner' | 'waffle' | 'chole' | 'pav';
+export type Mode = 'cashier' | 'kitchen' | 'dashboard' | 'orders' | 'admin' | 'runner' | 'waffle' | 'chole' | 'pav' | 'organizations';
 
 const initialSettings: AppSettings = {
   id: 1,
@@ -45,6 +47,7 @@ function allowedModes(profile: Profile, settings: AppSettings): Mode[] {
   const all: Mode[] = [];
   const role = canonicalRole(profile.role);
   const f = settings.features;
+  if (profile.is_super_admin) all.push('organizations');
   if (['owner', 'manager', 'cashier'].includes(role) && f.cashier) all.push('cashier');
   if (['owner', 'manager', 'cashier'].includes(role) && f.orders) all.push('orders');
   if (['owner', 'manager', 'kitchen'].includes(role) && f.kitchen) all.push('kitchen', 'waffle', 'chole', 'pav');
@@ -58,7 +61,7 @@ function allowedModes(profile: Profile, settings: AppSettings): Mode[] {
 function queryMode(): Mode | null {
   if (typeof window === 'undefined') return null;
   const raw = new URLSearchParams(window.location.search).get('mode') as Mode | null;
-  return raw && ['cashier', 'kitchen', 'dashboard', 'orders', 'admin', 'runner', 'waffle', 'chole', 'pav'].includes(raw) ? raw : null;
+  return raw && ['cashier', 'kitchen', 'dashboard', 'orders', 'admin', 'runner', 'waffle', 'chole', 'pav', 'organizations'].includes(raw) ? raw : null;
 }
 
 function mergeSettings(raw: Partial<AppSettings> | undefined): AppSettings {
@@ -72,10 +75,10 @@ function mergeSettings(raw: Partial<AppSettings> | undefined): AppSettings {
 async function loadUserContext(session: { user: { id: string } } | null): Promise<{ profile: Profile; settings: AppSettings } | null> {
   if (!session) return null;
   try {
-    const [{ data: p, error: profileError }, { data: s, error: settingsError }] = await Promise.all([
-      supabase.from('profiles').select('*').eq('id', session.user.id).single(),
-      supabase.from('app_settings').select('*').eq('id', 1).single(),
-    ]);
+    const { data: p, error: profileError } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+    const { data: s, error: settingsError } = p?.organization_id
+      ? await supabase.from('app_settings').select('*').eq('organization_id', p.organization_id).eq('outlet_id', p.outlet_id).maybeSingle()
+      : { data: null, error: null };
     if (p && !profileError && p.active) {
       const profile = p as Profile;
       const settings = mergeSettings(s as Partial<AppSettings> | undefined);
@@ -160,9 +163,13 @@ export default function Home() {
 
   if (!sessionReady) return <main className="authPage"><div className="loadingCard">Loading FoodDesk…</div></main>;
   if (!profile) return <Auth />;
+  if (!profile.is_super_admin && (!profile.organization_id || !profile.outlet_id || !settings.onboarding_completed)) {
+    return <Onboarding settings={settings} onComplete={(next) => { setSettings(mergeSettings(next)); setProfile({ ...profile, organization_id: next.organization_id ?? profile.organization_id, outlet_id: next.outlet_id ?? profile.outlet_id }); }} />;
+  }
 
   const roleLabel = ROLE_LABELS[profile.role];
-  const content = mode === 'cashier'
+  const content = mode === 'organizations' && profile.is_super_admin ? <OrganizationAdmin />
+    : mode === 'cashier'
     ? <Cashier settings={settings} />
     : mode === 'kitchen'
       ? <Kitchen settings={settings} />
@@ -181,7 +188,7 @@ export default function Home() {
       <div className="brandBlock"><div className="brand">🍴 {settings.event_name}</div><div className="subtitle">POS that just works. • {roleLabel}</div></div>
       <div className="userActions">
         <SyncBanner />
-        <nav className="tabs top-tabs">{modes.map(k => <button key={k} className={'tab ' + (mode === k ? 'active' : '')} onClick={() => setMode(k)}>{k === 'admin' ? 'Manage' : k === 'orders' ? 'Orders' : k === 'runner' ? 'Runner' : k === 'waffle' ? 'Waffle' : k === 'chole' ? 'Chole' : k === 'pav' ? 'Pav' : k.charAt(0).toUpperCase() + k.slice(1)}</button>)}</nav>
+        <nav className="tabs top-tabs">{modes.map(k => <button key={k} className={'tab ' + (mode === k ? 'active' : '')} onClick={() => setMode(k)}>{k === 'admin' ? 'Manage' : k === 'orders' ? 'Orders' : k === 'runner' ? 'Runner' : k === 'waffle' ? 'Waffle' : k === 'chole' ? 'Chole' : k === 'pav' ? 'Pav' : k === 'organizations' ? 'Organizations' : k.charAt(0).toUpperCase() + k.slice(1)}</button>)}</nav>
         <button className="avatar" title="Sign out" onClick={() => supabase.auth.signOut()}>{profile.display_name.slice(0, 1).toUpperCase()}</button>
       </div>
     </header>

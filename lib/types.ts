@@ -83,6 +83,9 @@ export type Profile = {
   role: Role;
   active: boolean;
   created_at: string;
+  organization_id?: string | null;
+  outlet_id?: string | null;
+  is_super_admin?: boolean;
 };
 
 export type FeatureFlags = {
@@ -103,6 +106,9 @@ export type FeatureFlags = {
 
 export type AppSettings = {
   id: number;
+  organization_id?: string | null;
+  outlet_id?: string | null;
+  onboarding_completed?: boolean;
   event_name: string;
   event_mode: boolean;
   event_start_date: string | null;
