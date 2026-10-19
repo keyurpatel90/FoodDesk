@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowDownRight, ArrowUpRight, Banknote, BellRing, ChefHat, CloudOff, Cookie, CreditCard, Download, ReceiptText, RefreshCw, Sandwich, Smartphone, Soup, TrendingUp, Trophy, UtensilsCrossed, Users, Wallet, type LucideIcon } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, Banknote, BellRing, CheckCircle2, ChefHat, Clock3, CloudOff, CreditCard, Download, ReceiptText, RefreshCw, Smartphone, TrendingUp, Trophy, Users, Wallet, type LucideIcon } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getLocalOrders } from '@/lib/offline';
 import { mergeOrders } from '@/lib/order-merge';
@@ -26,7 +26,6 @@ const PAYMENT: Record<string, { label: string; icon: LucideIcon; color: string; 
   upi: { label: 'UPI', icon: Smartphone, color: '#666cff', tone: 't-primary' },
   pos: { label: 'Card', icon: CreditCard, color: '#26c6f9', tone: 't-info' },
 };
-const STATION_ICON: Record<string, LucideIcon> = { waffle: Cookie, chole: Soup, pav: Sandwich };
 const STATUS_TONE: Record<string, string> = { new: 't-info', preparing: 't-warning', ready: 't-success', delivered: 't-primary', completed: 't-primary', cancelled: 't-danger' };
 
 function Delta({ value }: { value: number | null }) {
@@ -162,14 +161,13 @@ export default function Dashboard({ settings, userName, nav }: { settings: AppSe
     return Object.entries(t).sort((a, b) => b[1] - a[1]);
   }, [active]);
 
-  const stations = useMemo(() => {
-    const s: Record<string, { total: number; done: number }> = {};
+  const queue = useMemo(() => {
+    let waiting = 0, cooking = 0, finished = 0;
     active.forEach(o => o.items.forEach(i => {
       if (i.status === 'cancelled') return;
-      const row = (s[i.station] ??= { total: 0, done: 0 });
-      row.total += 1; if (i.status === 'done') row.done += 1;
+      if (i.status === 'done') finished += 1; else if (o.status === 'new') waiting += 1; else cooking += 1;
     }));
-    return Object.entries(s).sort((a, b) => b[1].total - a[1].total);
+    return { waiting, cooking, finished, total: waiting + cooking + finished };
   }, [active]);
 
   const peak = hourly.length ? hourly.reduce((a, b) => (b.orders > a.orders ? b : a)) : null;
@@ -193,13 +191,11 @@ export default function Dashboard({ settings, userName, nav }: { settings: AppSe
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `fooddesk-${serviceDay || 'orders'}.csv`; a.click(); URL.revokeObjectURL(url);
   }
 
-  const visitorPct = settings.event_mode && settings.expected_visitors > 0 ? Math.min(100, Math.round((covers / settings.expected_visitors) * 100)) : null;
-
   return <main className="container" aria-busy={loading}>
     <div className="pageHead">
       <div>
-        <h1>{settings.event_mode ? 'Event dashboard' : 'Business dashboard'}</h1>
-        <p className="hint">{settings.event_name}{settings.event_location ? ` • ${settings.event_location}` : ''} {offline ? <span className="live off"><CloudOff size={13} /> Offline, showing this device</span> : <span className="live">● Live</span>}</p>
+        <h1>Dashboard</h1>
+        <p className="hint">{settings.business_name} {offline ? <span className="live off"><CloudOff size={13} /> Offline, showing this device</span> : <span className="live">● Live</span>}</p>
       </div>
       <div className="toolbar">
         <input type="date" aria-label="Service day" value={serviceDay} onChange={e => setServiceDay(e.target.value)} />
@@ -222,10 +218,6 @@ export default function Dashboard({ settings, userName, nav }: { settings: AppSe
             <p className="muted">No sales {serviceDay ? 'on this day' : 'yet'}. New orders appear here the moment they are placed.</p>
             {nav?.cashier && <button className="primary small" onClick={nav.cashier}>Open cashier</button>}
           </>}
-          {visitorPct !== null && <div className="heroVisitors">
-            <div className="rowBetween"><span>Visitors served</span><b>{covers.toLocaleString('en-IN')} / {settings.expected_visitors.toLocaleString('en-IN')}</b></div>
-            <div className="track" role="progressbar" aria-valuenow={visitorPct} aria-valuemin={0} aria-valuemax={100} aria-label="Visitors served"><i style={{ width: `${visitorPct}%` }} /></div>
-          </div>}
         </div>
         <span className="heroTrophy" aria-hidden="true"><Trophy size={46} /></span>
       </section>
@@ -266,8 +258,8 @@ export default function Dashboard({ settings, userName, nav }: { settings: AppSe
       </section>
 
       <section className="card third">
-        <div className="cardHead"><div><h3>Kitchen stations</h3><p className="hint">Items finished</p></div></div>
-        {stations.length ? <ul className="rows">{stations.map(([k, s]) => { const Icon = STATION_ICON[k] ?? UtensilsCrossed; const pct = s.total ? Math.round((s.done / s.total) * 100) : 0; return <li key={k} className="stationRow t-primary"><span className="tonal sm"><Icon size={16} /></span><div className="grow"><div className="rowBetween"><span>{cap(k)}</span><small>{s.done} / {s.total} done</small></div><div className="track" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`${cap(k)} items finished`}><i style={{ width: `${pct}%` }} /></div></div></li>; })}</ul> : <div className="emptyMini"><ChefHat size={22} /><p>No kitchen activity yet.</p></div>}
+        <div className="cardHead"><div><h3>Kitchen queue</h3><p className="hint">Items by stage</p></div></div>
+        {queue.total ? <ul className="rows">{([['New items', queue.waiting, Clock3, 't-warning'], ['Cooking', queue.cooking, ChefHat, 't-info'], ['Done', queue.finished, CheckCircle2, 't-success']] as [string, number, LucideIcon, string][]).map(([label, n, Icon, tone]) => <li key={label} className={'stationRow ' + tone}><span className="tonal sm"><Icon size={16} /></span><div className="grow"><div className="rowBetween"><span>{label}</span><b>{n}</b></div><div className="track" role="progressbar" aria-valuenow={Math.round((n / queue.total) * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${label} share of items`}><i style={{ width: `${Math.round((n / queue.total) * 100)}%` }} /></div></div></li>)}</ul> : <div className="emptyMini"><ChefHat size={22} /><p>No kitchen activity yet.</p></div>}
       </section>
 
       <section className="card recent">

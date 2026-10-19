@@ -9,7 +9,6 @@ import Kitchen from '@/components/Kitchen';
 import Dashboard from '@/components/Dashboard';
 import Admin from '@/components/Admin';
 import Orders from '@/components/Orders';
-import Station from '@/components/Station';
 import Runner from '@/components/Runner';
 import Shell from '@/components/Shell';
 import { supabase } from '@/lib/supabase';
@@ -17,19 +16,11 @@ import { cacheSnapshot, getCachedProfile, getCachedSettings, installSyncListener
 import type { AppSettings, FeatureFlags, Profile, Role } from '@/lib/types';
 import { DEFAULT_FEATURES, canonicalRole, ROLE_LABELS } from '@/lib/types';
 
-export type Mode = 'cashier' | 'kitchen' | 'dashboard' | 'orders' | 'admin' | 'runner' | 'waffle' | 'chole' | 'pav' | 'organizations';
+export type Mode = 'cashier' | 'kitchen' | 'dashboard' | 'orders' | 'admin' | 'runner' | 'organizations';
 
 const initialSettings: AppSettings = {
   id: 1,
-  event_name: 'FoodDesk',
-  event_mode: true,
-  event_start_date: null,
-  event_end_date: null,
-  event_location: '',
-  expected_visitors: 0,
-  number_stalls: 1,
-  number_cashiers: 1,
-  number_kitchen_stations: 3,
+  business_name: 'FoodDesk',
   currency_symbol: '₹',
   service_day_cutoff_hour: 5,
   kitchen_delay_minutes: 10,
@@ -50,7 +41,7 @@ function allowedModes(profile: Profile, settings: AppSettings): Mode[] {
   if (profile.is_super_admin) all.push('organizations');
   if (['owner', 'manager', 'cashier'].includes(role) && f.cashier) all.push('cashier');
   if (['owner', 'manager', 'cashier'].includes(role) && f.orders) all.push('orders');
-  if (['owner', 'manager', 'kitchen'].includes(role) && f.kitchen) all.push('kitchen', 'waffle', 'chole', 'pav');
+  if (['owner', 'manager', 'kitchen'].includes(role) && f.kitchen) all.push('kitchen');
   if (['owner', 'manager', 'viewer'].includes(role) && f.dashboard) all.push('dashboard');
   if (['owner', 'manager', 'runner'].includes(role)) all.push('runner');
   if (role === 'owner') all.push('admin');
@@ -61,13 +52,16 @@ function allowedModes(profile: Profile, settings: AppSettings): Mode[] {
 function queryMode(): Mode | null {
   if (typeof window === 'undefined') return null;
   const raw = new URLSearchParams(window.location.search).get('mode') as Mode | null;
-  return raw && ['cashier', 'kitchen', 'dashboard', 'orders', 'admin', 'runner', 'waffle', 'chole', 'pav', 'organizations'].includes(raw) ? raw : null;
+  return raw && ['cashier', 'kitchen', 'dashboard', 'orders', 'admin', 'runner', 'organizations'].includes(raw) ? raw : null;
 }
 
 function mergeSettings(raw: Partial<AppSettings> | undefined): AppSettings {
+  // Older rows and cached snapshots call the business name `event_name`.
+  const legacyName = (raw as { event_name?: string } | undefined)?.event_name;
   return {
     ...initialSettings,
     ...(raw ?? {}),
+    business_name: raw?.business_name || legacyName || initialSettings.business_name,
     features: { ...DEFAULT_FEATURES, ...((raw?.features ?? {}) as Partial<FeatureFlags>) },
   };
 }
@@ -144,15 +138,13 @@ export default function Home() {
     if (!profile) return;
     const ch = supabase.channel('app-settings-live').on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, payload => {
       const row = payload.new as Partial<AppSettings>;
-      if (!row || row.id !== 1) return;
-      const merged = mergeSettings({ ...settings, ...row });
-      setSettings(merged);
-      void cacheSnapshot({ settings: merged });
+      if (!row || !row.outlet_id || row.outlet_id !== profile.outlet_id) return;
+      setSettings(prev => { const merged = mergeSettings({ ...prev, ...row }); void cacheSnapshot({ settings: merged }); return merged; });
     }).subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [profile]);
 
-  useEffect(() => { document.title = `${settings.event_name} • ${mode}`; }, [settings.event_name, mode]);
+  useEffect(() => { document.title = `${settings.business_name} • ${mode}`; }, [settings.business_name, mode]);
 
   useEffect(() => {
     if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js');
@@ -161,29 +153,34 @@ export default function Home() {
   const modes = useMemo(() => profile ? allowedModes(profile, settings) : [], [profile, settings]);
   useEffect(() => { if (profile && !modes.includes(mode)) setMode(modes[0] ?? 'cashier'); }, [profile, modes, mode]);
 
+  async function reloadContext() {
+    const { data: { session } } = await supabase.auth.getSession();
+    const context = await loadUserContext(session);
+    if (context) { setProfile(context.profile); setSettings(context.settings); }
+  }
+
   if (!sessionReady) return <main className="authPage"><div className="loadingCard">Loading FoodDesk…</div></main>;
   if (!profile) return <Auth />;
   if (!profile.is_super_admin && (!profile.organization_id || !profile.outlet_id || !settings.onboarding_completed)) {
-    return <Onboarding settings={settings} onComplete={(next) => { setSettings(mergeSettings(next)); setProfile({ ...profile, organization_id: next.organization_id ?? profile.organization_id, outlet_id: next.outlet_id ?? profile.outlet_id }); }} />;
+    const newBusiness = !profile.organization_id || !profile.outlet_id;
+    const canSetUp = newBusiness || ['owner', 'manager'].includes(canonicalRole(profile.role));
+    if (!canSetUp) {
+      return <main className="authPage"><section className="authCard"><h1>Setup is not finished</h1><p className="muted">An owner or manager needs to finish setting up this outlet before you can start. Ask them to sign in, then try again.</p><button className="secondary bigbtn" onClick={() => void supabase.auth.signOut()}>Sign out</button></section></main>;
+    }
+    return <Onboarding settings={settings} profile={profile} onComplete={reloadContext} />;
   }
 
   const roleLabel = ROLE_LABELS[profile.role];
+  const go = (target: Mode) => (modes.includes(target) ? () => setMode(target) : undefined);
   const content = mode === 'organizations' && profile.is_super_admin ? <OrganizationAdmin />
-    : mode === 'cashier'
-    ? <Cashier settings={settings} />
-    : mode === 'kitchen'
-      ? <Kitchen settings={settings} />
-      : mode === 'dashboard'
-        ? <Dashboard settings={settings} userName={profile.display_name} nav={{ orders: modes.includes('orders') ? () => setMode('orders') : undefined, runner: modes.includes('runner') ? () => setMode('runner') : undefined, cashier: modes.includes('cashier') ? () => setMode('cashier') : undefined }} />
-        : mode === 'orders'
-          ? <Orders settings={settings} profile={profile} />
-          : mode === 'admin'
-            ? <Admin settings={settings} profile={profile} onSettingsChange={setSettings} />
-            : mode === 'runner'
-              ? <Runner settings={settings} />
-              : <Station station={mode as 'waffle' | 'chole' | 'pav'} settings={settings} />;
+    : mode === 'cashier' ? <Cashier settings={settings} />
+    : mode === 'dashboard' ? <Dashboard settings={settings} userName={profile.display_name} nav={{ orders: go('orders'), runner: go('runner'), cashier: go('cashier') }} />
+    : mode === 'orders' ? <Orders settings={settings} profile={profile} />
+    : mode === 'admin' ? <Admin settings={settings} profile={profile} onSettingsChange={setSettings} />
+    : mode === 'runner' ? <Runner settings={settings} />
+    : <Kitchen settings={settings} />;
 
-  return <Shell brand={settings.event_name} roleLabel={roleLabel} userName={profile.display_name} modes={modes} mode={mode} onMode={next => setMode(next as Mode)} onSignOut={() => { void supabase.auth.signOut(); }}>
+  return <Shell brand={settings.business_name} roleLabel={roleLabel} userName={profile.display_name} modes={modes} mode={mode} onMode={next => setMode(next as Mode)} onSignOut={() => { void supabase.auth.signOut(); }}>
     {error && <div className="container"><div className="offlineNotice">{error}</div></div>}
     {content}
   </Shell>;

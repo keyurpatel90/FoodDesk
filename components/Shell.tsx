@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Building2, ChefHat, ClipboardList, Cookie, HandPlatter, LayoutDashboard, LogOut, Menu, Sandwich, Settings, ShoppingCart, Soup, UtensilsCrossed, X, type LucideIcon } from 'lucide-react';
+import { Building2, ChefHat, ClipboardList, HandPlatter, LayoutDashboard, LogOut, Menu, Settings, ShoppingCart, UtensilsCrossed, X, type LucideIcon } from 'lucide-react';
 import SyncBanner from '@/components/SyncBanner';
 
 type NavItem = { label: string; icon: LucideIcon; group: string };
@@ -11,9 +11,6 @@ const NAV: Record<string, NavItem> = {
   orders: { label: 'Orders', icon: ClipboardList, group: 'Front of house' },
   runner: { label: 'Runner', icon: HandPlatter, group: 'Front of house' },
   kitchen: { label: 'Kitchen', icon: ChefHat, group: 'Kitchen' },
-  waffle: { label: 'Waffle', icon: Cookie, group: 'Kitchen' },
-  chole: { label: 'Chole', icon: Soup, group: 'Kitchen' },
-  pav: { label: 'Pav', icon: Sandwich, group: 'Kitchen' },
   dashboard: { label: 'Dashboard', icon: LayoutDashboard, group: 'Insights' },
   admin: { label: 'Manage', icon: Settings, group: 'Admin' },
   organizations: { label: 'Organizations', icon: Building2, group: 'Admin' },

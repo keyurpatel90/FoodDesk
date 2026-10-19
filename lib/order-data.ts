@@ -1,9 +1,9 @@
 import { supabase } from '@/lib/supabase';
 import { getLocalOrders, saveLocalOrder } from '@/lib/offline';
 import { mergeOrders, normalizedRemoteOrder } from '@/lib/order-merge';
-import type { Order, OrderItem } from '@/lib/types';
+import type { Order } from '@/lib/types';
 
-export async function loadOrdersWithItems(statuses?: Order['status'][], station?: OrderItem['station'], limit = 100): Promise<Order[]> {
+export async function loadOrdersWithItems(statuses?: Order['status'][], limit = 100): Promise<Order[]> {
   try {
     let query = supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(limit);
     if (statuses?.length) query = query.in('status', statuses) as typeof query;
@@ -22,10 +22,10 @@ export async function loadOrdersWithItems(statuses?: Order['status'][], station?
     await Promise.all(withItems.map(order => saveLocalOrder(normalizedRemoteOrder(order))));
     const local = await getLocalOrders();
     const merged = mergeOrders(withItems, local);
-    return station ? merged.filter(order => order.items.some(item => item.station === station && item.status !== 'cancelled')) : merged;
+    return merged;
   } catch {
     const local = await getLocalOrders();
-    return local.filter(order => !statuses?.length || statuses.includes(order.status)).filter(order => !station || order.items.some(item => item.station === station && item.status !== 'cancelled')).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, limit);
+    return local.filter(order => !statuses?.length || statuses.includes(order.status)).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, limit);
   }
 }
 

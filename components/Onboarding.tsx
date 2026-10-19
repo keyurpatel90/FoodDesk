@@ -1,269 +1,138 @@
 'use client';
+
 import { useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, LogOut, Plus, Store, Trash2, UtensilsCrossed } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import type { AppSettings, Product, Station } from '@/lib/types';
+import { saveSettings } from '@/lib/settings';
+import type { AppSettings, Profile, ProductUnit } from '@/lib/types';
+import { Field } from '@/components/Modal';
 
-type Draft = Partial<Product> & { id?: string };
+type Draft = { name: string; price: string; cost: string; unit_type: ProductUnit; category: string };
+const blank = (): Draft => ({ name: '', price: '', cost: '', unit_type: 'piece', category: '' });
+const STEPS = [{ label: 'Business', icon: Store }, { label: 'Menu', icon: UtensilsCrossed }, { label: 'Finish', icon: CheckCircle2 }];
+const digitsOnly = (v: string) => Array.from(v).filter(c => c >= '0' && c <= '9').join('');
+const errorText = (e: unknown, fallback: string): string => {
+  const message = e && typeof e === 'object' ? (e as { message?: unknown }).message : undefined;
+  return typeof message === 'string' && message ? message : fallback;
+};
 
-const stations: [Station, string][] = [
-  ['waffle', 'Waffle'],
-  ['chole', 'Chole Kulche'],
-  ['pav', 'Pav Bataka'],
-];
-
-const stepLabels = ['Event', 'Menu', 'Operations', 'Finish'];
-const features = ['Offline-first POS', 'Kitchen Display', 'Reports & Profit', 'Inventory'];
-
-export default function Onboarding({
-  settings,
-  onComplete,
-}: {
-  settings: AppSettings;
-  onComplete: (s: AppSettings) => void;
-}) {
+export default function Onboarding({ settings, profile, onComplete }: { settings: AppSettings; profile: Profile; onComplete: () => Promise<void> }) {
+  const needsBusiness = !profile.organization_id || !profile.outlet_id;
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
-  const [organizationName, setOrganizationName] = useState('');
+  const [business, setBusiness] = useState(needsBusiness ? '' : settings.business_name === 'FoodDesk' ? '' : settings.business_name);
   const [outletName, setOutletName] = useState('Main Outlet');
   const [outletCode, setOutletCode] = useState('MAIN');
-  const [event, setEvent] = useState({
-    name: settings.event_name,
-    start: settings.event_start_date || '',
-    end: settings.event_end_date || '',
-    location: settings.event_location || '',
-    visitors: String(settings.expected_visitors || ''),
-    stalls: String(settings.number_stalls || 1),
-    cashiers: String(settings.number_cashiers || 1),
-  });
-  const [products, setProducts] = useState<Draft[]>([
-    { name: 'Chole Kulche', price: 600, food_cost: 200, unit_type: 'kg', station: 'chole', category: 'Street Food', active: true, sort_order: 1 },
-    { name: 'Mini Waffles', price: 100, food_cost: 30, unit_type: 'piece', station: 'waffle', category: 'Dessert', active: true, sort_order: 2 },
-    { name: 'Pav Bataka', price: 60, food_cost: 20, unit_type: 'piece', station: 'pav', category: 'Street Food', active: true, sort_order: 3 },
-  ]);
+  const [items, setItems] = useState<Draft[]>([blank()]);
+  const cur = settings.currency_symbol || '₹';
 
-  function add() {
-    setProducts((p) => [
-      ...p,
-      { name: '', price: 0, food_cost: 0, unit_type: 'piece', station: 'waffle', category: '', active: true, sort_order: p.length + 1 },
-    ]);
-  }
+  const isEmpty = (d: Draft) => !d.name.trim() && !d.price && !d.cost;
+  const isComplete = (d: Draft) => !!d.name.trim() && Number(d.price) > 0;
+  const valid = items.filter(isComplete);
+  const update = (i: number, patch: Partial<Draft>) => setItems(list => list.map((d, n) => n === i ? { ...d, ...patch } : d));
 
-  function update(i: number, k: string, v: any) {
-    setProducts((p) => p.map((x, n) => (n === i ? { ...x, [k]: v } : x)));
+  function next() {
+    setMsg('');
+    if (step === 1) {
+      if (!business.trim()) { setMsg('Enter your business name to continue.'); return; }
+      if (needsBusiness && (!outletName.trim() || !outletCode.trim())) { setMsg('Enter a name and a short code for your first outlet.'); return; }
+    }
+    if (step === 2 && items.some(d => !isEmpty(d) && !isComplete(d))) { setMsg('Give every item a name and a selling price above zero, or remove it.'); return; }
+    setStep(step + 1);
   }
 
   async function finish() {
-    setSaving(true);
-    setMsg('');
+    setSaving(true); setMsg('');
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw Error('Session expired');
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Your session expired. Please sign in again.');
+      const { data: existing } = await supabase.from('profiles').select('organization_id,outlet_id').eq('id', user.id).single();
+      let org = existing?.organization_id as string | null | undefined;
+      let outlet = existing?.outlet_id as string | null | undefined;
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('organization_id,outlet_id')
-        .eq('id', user.id)
-        .single();
-      let org = profile?.organization_id as string | null | undefined;
-      let outlet = profile?.outlet_id as string | null | undefined;
       if (!org || !outlet) {
-        const { data: created, error: createError } = await supabase.rpc('create_organization_with_outlet', { p_organization_name: organizationName.trim() || `${user.email?.split('@')[0] || 'My'} Organization`, p_outlet_name: outletName.trim() || 'Main Outlet', p_outlet_code: outletCode.trim().toUpperCase() || 'MAIN' });
-        if (createError) throw createError;
+        const { data: created, error } = await supabase.rpc('create_organization_with_outlet', { p_organization_name: business.trim(), p_outlet_name: outletName.trim() || 'Main Outlet', p_outlet_code: outletCode.trim().toUpperCase() || 'MAIN' });
+        if (error) throw error;
         org = created?.organization_id; outlet = created?.outlet_id;
       }
-      if (!org || !outlet) throw new Error('Organization and outlet could not be created. Apply the FoodDesk multi-tenant SQL migration and try again.');
+      if (!org || !outlet) throw new Error('Your business could not be created. Run the latest SQL migration in Supabase and try again.');
 
-      const payload = {
-        event_name: event.name || 'FoodDesk Event',
-        event_start_date: event.start || null,
-        event_end_date: event.end || null,
-        event_location: event.location,
-        expected_visitors: Number(event.visitors) || 0,
-        number_stalls: Number(event.stalls) || 1,
-        number_cashiers: Number(event.cashiers) || 1,
-        onboarding_completed: true,
-        event_mode: true,
-        organization_id: org,
-        outlet_id: outlet,
-      };
-      const { data: s, error } = await supabase
-        .from('app_settings')
-        .update(payload)
-        .eq('organization_id', org)
-        .eq('outlet_id', outlet)
-        .select()
-        .single();
-      if (error) throw error;
-
-      const valid = products.filter((p) => String(p.name).trim() && Number(p.price) > 0);
+      // Menu first, then mark setup complete, so a failed save can simply be retried.
       if (valid.length) {
-        const { error: pErr } = await supabase.from('products').insert(
-          valid.map((p) => ({
-            ...p,
-            name: String(p.name).trim(),
-            price: Number(p.price),
-            food_cost: Number(p.food_cost) || 0,
-            unit_type: p.unit_type || 'piece',
-            organization_id: org,
-            outlet_id: outlet,
-          }))
-        );
-        if (pErr) throw pErr;
+        const { count } = await supabase.from('products').select('id', { count: 'exact', head: true }).eq('organization_id', org).eq('outlet_id', outlet);
+        if (!count) {
+          const { error } = await supabase.from('products').insert(valid.map((d, i) => ({ name: d.name.trim(), price: Number(d.price), food_cost: Number(d.cost) || 0, unit_type: d.unit_type, category: d.category.trim() || null, active: true, sort_order: i + 1, organization_id: org, outlet_id: outlet })));
+          if (error) throw error;
+        }
       }
-
-      onComplete({ ...settings, ...s, onboarding_completed: true });
+      await saveSettings(org, outlet, { business_name: business.trim(), onboarding_completed: true });
+      await onComplete();
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'Could not finish setup');
+      setMsg(errorText(e, 'Could not finish setup. Please try again.'));
     } finally {
       setSaving(false);
     }
   }
 
-  return (
-    <main className="authPage">
-      <section className="wizard card">
-        <div className="wizardHeader">
-          <div>
-            <div className="brand">🍴 FoodDesk</div>
-            <p>Set up your event in a few minutes.</p>
+  return <main className="obPage">
+    <section className="obCard">
+      <header className="obHead">
+        <span className="logo"><UtensilsCrossed size={22} /></span>
+        <div><h1>Set up FoodDesk</h1><p className="hint">Three quick steps, then you are ready to take orders.</p></div>
+        <button type="button" className="iconBtn obOut" onClick={() => void supabase.auth.signOut()} title="Sign out" aria-label="Sign out"><LogOut size={18} /></button>
+      </header>
+
+      <ol className="obSteps" aria-label="Setup progress">
+        {STEPS.map((s, i) => { const n = i + 1; const Icon = s.icon; const state = step === n ? 'active' : step > n ? 'done' : ''; return <li key={s.label} className={state} aria-current={step === n ? 'step' : undefined}><span className="obDot">{step > n ? <Check size={18} /> : <Icon size={18} />}</span><b>{s.label}</b></li>; })}
+      </ol>
+
+      <div className="obBody">
+        {step === 1 && <>
+          <h2>Tell us about your business</h2>
+          <p className="hint">This name appears on receipts and across the app.</p>
+          <div className="mGrid">
+            <Field label="Business name" wide><input autoFocus value={business} onChange={e => setBusiness(e.target.value)} placeholder="e.g. Spice Garden" /></Field>
+            {needsBusiness && <>
+              <Field label="First outlet name"><input value={outletName} onChange={e => setOutletName(e.target.value)} /></Field>
+              <Field label="Outlet code" hint="Short and unique, for example MAIN"><input value={outletCode} maxLength={12} onChange={e => setOutletCode(e.target.value.toUpperCase())} /></Field>
+            </>}
           </div>
-          <span>Step {step} of 4</span>
-        </div>
+        </>}
 
-        <div className="wizardSteps">
-          {stepLabels.map((x, i) => (
-            <div className={step === i + 1 ? 'active' : step > i + 1 ? 'done' : ''} key={x}>
-              <b>{i + 1}</b>
-              <span>{x}</span>
-            </div>
-          ))}
-        </div>
-
-        {step === 1 && (
-          <div className="wizardBody">
-            <h1>Tell us about the event</h1>
-            <div className="formgrid wide">
-              <label>Organization name<input value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} placeholder="Your business / organization" /></label>
-              <label>First outlet name<input value={outletName} onChange={(e) => setOutletName(e.target.value)} /></label>
-              <label>Outlet code<input value={outletCode} onChange={(e) => setOutletCode(e.target.value.toUpperCase())} maxLength={12} /></label>
-              <label>
-                Event name
-                <input value={event.name} onChange={(e) => setEvent({ ...event, name: e.target.value })} />
-              </label>
-              <label>
-                Location
-                <input value={event.location} onChange={(e) => setEvent({ ...event, location: e.target.value })} />
-              </label>
-              <label>
-                Start date
-                <input type="date" value={event.start} onChange={(e) => setEvent({ ...event, start: e.target.value })} />
-              </label>
-              <label>
-                End date
-                <input type="date" value={event.end} onChange={(e) => setEvent({ ...event, end: e.target.value })} />
-              </label>
-              <label>
-                Expected visitors
-                <input type="number" value={event.visitors} onChange={(e) => setEvent({ ...event, visitors: e.target.value })} />
-              </label>
-              <label>
-                Number of stalls
-                <input type="number" min="1" value={event.stalls} onChange={(e) => setEvent({ ...event, stalls: e.target.value })} />
-              </label>
-            </div>
+        {step === 2 && <>
+          <div className="cardHead"><div><h2>Add what you sell</h2><p className="hint">Price per piece, kg or litre. You can skip this and add items later in Manage.</p></div><button type="button" className="secondary small" onClick={() => setItems(l => [...l, blank()])}><Plus size={16} /> Add item</button></div>
+          <div className="obItems">
+            {items.map((d, i) => <div className="obItem" key={i}>
+              <Field label="Item name" wide><input value={d.name} onChange={e => update(i, { name: e.target.value })} placeholder="e.g. Masala dosa" /></Field>
+              <Field label={`Price (${cur})`}><input inputMode="numeric" value={d.price} onChange={e => update(i, { price: digitsOnly(e.target.value) })} /></Field>
+              <Field label={`Food cost (${cur})`}><input inputMode="numeric" value={d.cost} onChange={e => update(i, { cost: digitsOnly(e.target.value) })} /></Field>
+              <Field label="Sold by"><select value={d.unit_type} onChange={e => update(i, { unit_type: e.target.value as ProductUnit })}><option value="piece">Piece</option><option value="kg">Kilogram</option><option value="litre">Litre</option></select></Field>
+              <button type="button" className="iconBtn obDel" aria-label={`Remove item ${i + 1}`} onClick={() => setItems(l => l.length > 1 ? l.filter((_, n) => n !== i) : [blank()])}><Trash2 size={17} /></button>
+            </div>)}
           </div>
-        )}
+        </>}
 
-        {step === 2 && (
-          <div className="wizardBody">
-            <div className="sectionHead">
-              <div>
-                <h1>Build your menu</h1>
-                <p>
-                  Set a sell rate per piece, kg, or litre. Cashiers later enter 200 g, 250 ml, and so on, and the
-                  price is calculated.
-                </p>
-              </div>
-              <button className="secondary" onClick={add}>
-                <Plus size={16} /> Add item
-              </button>
-            </div>
-            {products.map((p, i) => (
-              <div className="wizardProduct" key={i}>
-                <input placeholder="Product name" value={p.name || ''} onChange={(e) => update(i, 'name', e.target.value)} />
-                <input type="number" placeholder="Sell ₹" value={p.price || ''} onChange={(e) => update(i, 'price', Number(e.target.value))} />
-                <input type="number" placeholder="Cost ₹" value={p.food_cost || ''} onChange={(e) => update(i, 'food_cost', Number(e.target.value))} />
-                <select value={p.unit_type || 'piece'} onChange={(e) => update(i, 'unit_type', e.target.value)}>
-                  <option value="piece">Per piece</option>
-                  <option value="kg">Per kg</option>
-                  <option value="litre">Per litre</option>
-                </select>
-                <select value={p.station} onChange={(e) => update(i, 'station', e.target.value)}>
-                  {stations.map((s) => (
-                    <option key={s[0]} value={s[0]}>
-                      {s[1]}
-                    </option>
-                  ))}
-                </select>
-                <button className="iconBtn" onClick={() => setProducts((arr) => arr.filter((_, n) => n !== i))}>
-                  <Trash2 size={17} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        {step === 3 && <div className="obDone">
+          <span className="obBadge"><CheckCircle2 size={34} /></span>
+          <h2>Ready to go</h2>
+          <p className="hint">Review and finish. Everything can be changed later in Manage.</p>
+          <ul className="obReview">
+            <li><span>Business</span><b>{business.trim()}</b></li>
+            {needsBusiness && <li><span>First outlet</span><b>{outletName.trim() || 'Main Outlet'} ({outletCode.trim() || 'MAIN'})</b></li>}
+            <li><span>Menu items</span><b>{valid.length ? `${valid.length} item${valid.length === 1 ? '' : 's'}` : 'None yet'}</b></li>
+          </ul>
+        </div>}
 
-        {step === 3 && (
-          <div className="wizardBody">
-            <h1>Operations</h1>
-            <div className="featureGrid">
-              {features.map((f) => (
-                <div className="feature on" key={f}>
-                  <span>{f}</span>
-                  <b>ON</b>
-                </div>
-              ))}
-            </div>
-            <label>
-              Expected cashiers
-              <input type="number" min="1" value={event.cashiers} onChange={(e) => setEvent({ ...event, cashiers: e.target.value })} />
-            </label>
-            <p className="hint">You can create staff accounts and refine roles after setup.</p>
-          </div>
-        )}
+        {msg && <div className="error" role="alert">{msg}</div>}
+      </div>
 
-        {step === 4 && (
-          <div className="wizardBody center">
-            <Check size={42} />
-            <h1>FoodDesk is ready</h1>
-            <p>Event mode, menu, stations and reporting foundation are configured.</p>
-          </div>
-        )}
-
-        {msg && <div className="error">{msg}</div>}
-
-        <div className="wizardActions">
-          {step > 1 && (
-            <button className="secondary" onClick={() => setStep(step - 1)}>
-              <ArrowLeft size={17} /> Back
-            </button>
-          )}
-          <span></span>
-          {step < 4 ? (
-            <button className="primary" onClick={() => setStep(step + 1)}>
-              {step === 3 ? 'Review' : 'Continue'} <ArrowRight size={17} />
-            </button>
-          ) : (
-            <button className="primary" disabled={saving} onClick={finish}>
-              {saving ? 'Saving…' : 'Finish setup'}
-            </button>
-          )}
-        </div>
-      </section>
-    </main>
-  );
+      <footer className="obFoot">
+        {step > 1 ? <button type="button" className="secondary" onClick={() => { setMsg(''); setStep(step - 1); }} disabled={saving}><ArrowLeft size={17} /> Back</button> : <span />}
+        {step < 3
+          ? <button type="button" className="primary" onClick={next}>Continue <ArrowRight size={17} /></button>
+          : <button type="button" className="primary" disabled={saving} onClick={() => void finish()}>{saving ? 'Setting up…' : 'Finish setup'}</button>}
+      </footer>
+    </section>
+  </main>;
 }

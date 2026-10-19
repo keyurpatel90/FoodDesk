@@ -1,4 +1,3 @@
-export type Station = 'waffle' | 'chole' | 'pav';
 export type ProductUnit = 'piece' | 'kg' | 'litre';
 export type Role = 'owner' | 'manager' | 'cashier' | 'kitchen' | 'runner' | 'viewer' | 'admin' | 'treasurer';
 export type PaymentMethod = 'cash' | 'upi' | 'pos';
@@ -11,7 +10,6 @@ export type Product = {
   price: number;
   food_cost: number;
   unit_type: ProductUnit;
-  station: Station;
   category?: string | null;
   active: boolean;
   sort_order: number;
@@ -36,7 +34,6 @@ export type OrderItem = {
   order_id: string;
   product_id: string;
   product_name: string;
-  station: Station;
   qty: number;
   price: number;
   food_cost: number;
@@ -109,15 +106,7 @@ export type AppSettings = {
   organization_id?: string | null;
   outlet_id?: string | null;
   onboarding_completed?: boolean;
-  event_name: string;
-  event_mode: boolean;
-  event_start_date: string | null;
-  event_end_date: string | null;
-  event_location: string;
-  expected_visitors: number;
-  number_stalls: number;
-  number_cashiers: number;
-  number_kitchen_stations: number;
+  business_name: string;
   currency_symbol: string;
   service_day_cutoff_hour: number;
   kitchen_delay_minutes: number;

@@ -23,8 +23,8 @@ export default function Auth() {
     <main className="authPage">
       <section className="authCard">
         <div className="brandMark">🍴</div>
-        <h1>Food Event Desk</h1>
-        <p className="muted">Sign in to run the event counter, kitchen and dashboard.</p>
+        <h1>FoodDesk</h1>
+        <p className="muted">Sign in to run the counter, kitchen and dashboard.</p>
         <form onSubmit={signIn} className="stack">
           <label>Email<input autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="staff@example.com" /></label>
           <label>Password<input autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="••••••••" /></label>

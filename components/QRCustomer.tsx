@@ -4,10 +4,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check, Minus, Plus } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { formatQty, fromDisplayQty, inputUnit, isMeasuredUnit, lineAmount, money, toDisplayQty, unitLabel } from '@/lib/format';
-import type { ProductUnit, Station } from '@/lib/types';
+import type { ProductUnit } from '@/lib/types';
 import QtyPicker from '@/components/QtyPicker';
 
-type MenuProduct = { id: string; name: string; price: number; station: Station; unit_type: ProductUnit };
+type MenuProduct = { id: string; name: string; price: number; category?: string | null; unit_type: ProductUnit };
 
 export default function QRCustomer({ token }: { token: string }) {
   const [products, setProducts] = useState<MenuProduct[]>([]);
@@ -98,7 +98,7 @@ export default function QRCustomer({ token }: { token: string }) {
             {products.map(p => (
               <button className="product" key={p.id} onClick={() => add(p)}>
                 <strong>{p.name}</strong>
-                <small>{p.station}</small>
+                <small>{p.category ?? ''}</small>
                 <span>{money(p.price, '₹')} / {unitLabel(p.unit_type)}</span>
               </button>
             ))}

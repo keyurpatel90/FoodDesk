@@ -1,5 +1,15 @@
 # FoodDesk
 
+## v5 changes (read first)
+
+1. Run `supabase/v5-kitchen-board-no-events.sql` once in the Supabase SQL editor (after `multitenant-security-upgrade.sql`), then deploy.
+   It makes `station` optional, renames the event name to the business name, removes the event-only settings,
+   and gives every outlet its settings row automatically.
+2. Stations and Event mode are gone. The kitchen is one board: New items, Cooking, Ready for pickup.
+3. Menu, discount, staff, outlet and organization forms open as popups.
+4. First-time setup is a three-step wizard (Business, Menu, Finish).
+
+
 **POS that just works.**  Fast. Offline. Simple.
 
 FoodDesk is an incremental evolution of the existing Food Event Desk Next.js/Supabase application. The working cashier, kitchen, station, orders, dashboard, authentication and admin screens are preserved rather than replaced.
