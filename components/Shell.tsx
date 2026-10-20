@@ -5,6 +5,7 @@ import { Building2, ChefHat, ClipboardList, HandPlatter, LayoutDashboard, LogOut
 import SyncBanner from '@/components/SyncBanner';
 import { subscriptionService } from '@/lib/subscription';
 import { SubscriptionLockout } from '@/components/SubscriptionLockout';
+import type { UserRole } from '@/lib/subscription-types';
 
 type NavItem = { label: string; icon: LucideIcon; group: string };
 
@@ -32,7 +33,25 @@ export default function Shell({ brand, roleLabel, userName, modes, mode, onMode,
   const [drawer, setDrawer] = useState(false);
   const [menu, setMenu] = useState(false);
   const acct = useRef<HTMLDivElement>(null);
-  const access = subscriptionService.canRoleAccessApp(roleLabel);
+
+  // 1. Initialize subscription state
+  const [subscription, setSubscription] = useState(() => subscriptionService.getSubscription());
+
+  // 2. Normalize role safely to match UserRole
+  const normalizedRole: UserRole = (
+    roleLabel.toLowerCase().includes('admin')
+      ? 'admin'
+      : roleLabel.toLowerCase().includes('kitchen') || roleLabel.toLowerCase().includes('chef')
+      ? 'kitchen'
+      : roleLabel.toLowerCase().includes('cashier')
+      ? 'cashier'
+      : roleLabel.toLowerCase().includes('runner')
+      ? 'runner'
+      : 'waiter'
+  );
+
+  // 3. Subscription access check (passes cleanly to TypeScript)
+  const access = subscriptionService.canRoleAccessApp(normalizedRole);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => { if (acct.current && !acct.current.contains(e.target as Node)) setMenu(false); };
@@ -50,12 +69,15 @@ export default function Shell({ brand, roleLabel, userName, modes, mode, onMode,
   const info = (k: string): NavItem => NAV[k] ?? { label: k.charAt(0).toUpperCase() + k.slice(1), icon: UtensilsCrossed, group: 'Admin' };
   const current = info(mode);
 
+  // 4. Lockout rendering when subscription is inactive
   if (!access.allowed || subscription.status === 'inactive') {
     return (
       <SubscriptionLockout
-        currentRole={roleLabel}
+        currentRole={normalizedRole}
         subscription={subscription}
-        onSwitchRole={setCurrentRole}
+        onSwitchRole={(newRole) => {
+          onMode(newRole);
+        }}
         onSubscriptionUpdated={() => setSubscription(subscriptionService.getSubscription())}
       />
     );
