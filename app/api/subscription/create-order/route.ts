@@ -4,15 +4,20 @@ import { authorizeOrganization, isPlanId, PLAN_PRICES, razorpayRequest } from '@
 export const runtime = 'nodejs';
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    if (!isPlanId(body?.tierId)) return NextResponse.json({ error: 'Invalid subscription plan.' }, { status: 400 });
-    const auth = await authorizeOrganization(req, body?.organizationId);
-    const plan = PLAN_PRICES[body.tierId];
+    const body: unknown = await req.json();
+    if (typeof body !== 'object' || body === null) {
+      return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
+    }
+    const requestBody = body as { tierId?: unknown; organizationId?: unknown };
+    const tierId: unknown = requestBody.tierId;
+    if (!isPlanId(tierId)) return NextResponse.json({ error: 'Invalid subscription plan.' }, { status: 400 });
+    const auth = await authorizeOrganization(req, requestBody.organizationId);
+    const plan = PLAN_PRICES[tierId];
     const order = await razorpayRequest('orders', {
       method: 'POST',
       body: JSON.stringify({
         amount: plan.amountPaise, currency: 'INR', receipt: `fd_${Date.now()}_${auth.organizationId.slice(0, 8)}`,
-        notes: { organizationId: auth.organizationId, tierId: body.tierId, userId: auth.userId },
+        notes: { organizationId: auth.organizationId, tierId, userId: auth.userId },
       }),
     });
     if (!order?.id || Number(order.amount) !== plan.amountPaise || order.currency !== 'INR') {
