@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Building2, ChefHat, ClipboardList, HandPlatter, LayoutDashboard, LogOut, Menu, Settings, ShoppingCart, UtensilsCrossed, X, type LucideIcon } from 'lucide-react';
 import SyncBanner from '@/components/SyncBanner';
+import { subscriptionService } from '@/lib/subscription';
+import { SubscriptionLockout } from '@/components/SubscriptionLockout';
 
 type NavItem = { label: string; icon: LucideIcon; group: string };
 
@@ -30,6 +32,7 @@ export default function Shell({ brand, roleLabel, userName, modes, mode, onMode,
   const [drawer, setDrawer] = useState(false);
   const [menu, setMenu] = useState(false);
   const acct = useRef<HTMLDivElement>(null);
+  const access = subscriptionService.canRoleAccessApp(currentRole);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => { if (acct.current && !acct.current.contains(e.target as Node)) setMenu(false); };
@@ -46,6 +49,17 @@ export default function Shell({ brand, roleLabel, userName, modes, mode, onMode,
 
   const info = (k: string): NavItem => NAV[k] ?? { label: k.charAt(0).toUpperCase() + k.slice(1), icon: UtensilsCrossed, group: 'Admin' };
   const current = info(mode);
+
+  if (!access.allowed || subscription.status === 'inactive') {
+    return (
+      <SubscriptionLockout
+        currentRole={currentRole}
+        subscription={subscription}
+        onSwitchRole={setCurrentRole}
+        onSubscriptionUpdated={() => setSubscription(subscriptionService.getSubscription())}
+      />
+    );
+  }
 
   return <div className="shell">
     <aside className={'sidebar' + (drawer ? ' open' : '')} aria-label="Sidebar">
