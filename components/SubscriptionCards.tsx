@@ -16,12 +16,9 @@ export const SubscriptionCards: React.FC<SubscriptionCardsProps> = ({
 }) => {
   const [selectedTierForPayment, setSelectedTierForPayment] = useState<TierConfig | null>(null);
 
-  const handleStartTrial = () => {
-    subscriptionService.startFreeTrial();
-    onSubscriptionUpdated();
-  };
-
-  const handleRazorpaySuccess = () => {
+  const handleRazorpaySuccess = (paymentId: string, orderId: string, expiryDate?: string) => {
+    subscriptionService.activateTier(selectedTierForPayment?.id || currentSubscription.tier, paymentId, orderId, 'Razorpay Checkout', expiryDate);
+    setSelectedTierForPayment(null);
     onSubscriptionUpdated();
   };
 
@@ -115,18 +112,11 @@ export const SubscriptionCards: React.FC<SubscriptionCardsProps> = ({
               onClick={() => setSelectedTierForPayment(SUBSCRIPTION_TIERS.professional)}
               className="w-full py-3 px-4 bg-white hover:bg-violet-50 text-[#6c5ce7] rounded-xl font-bold text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
             >
-              <span>Pay ₹799 with Razorpay</span>
+              <span>{currentSubscription.tier === 'professional' ? 'Renew Professional' : 'Choose Professional'}</span>
               <Shield className="w-4 h-4" />
             </button>
 
-            {!currentSubscription.isTrial && (
-              <button
-                onClick={handleStartTrial}
-                className="w-full py-2 px-3 text-xs text-violet-100 hover:text-white font-medium hover:underline text-center cursor-pointer"
-              >
-                Or Start 14-Day Free Trial (No Card Needed)
-              </button>
-            )}
+
           </div>
         </div>
 

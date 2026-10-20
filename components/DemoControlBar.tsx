@@ -33,7 +33,9 @@ export const DemoControlBar: React.FC<DemoControlBarProps> = ({
     if (tier === 'inactive') {
       subscriptionService.expireSubscription();
     } else {
-      subscriptionService.setTierDirectly(tier);
+      // Plan changes must go through verified Razorpay checkout, never a demo/local switch.
+      onOpenUpgradeModal();
+      return;
     }
     onSubscriptionChange();
   };
@@ -71,7 +73,7 @@ export const DemoControlBar: React.FC<DemoControlBarProps> = ({
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
             <Shield className="w-3.5 h-3.5 text-amber-400" />
-            <span>Simulate Tier:</span>
+            <span>Subscription Test:</span>
           </div>
 
           <div className="flex items-center gap-1 bg-slate-800/80 p-0.5 rounded-lg border border-slate-700">

@@ -1,95 +1,62 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
+import { authorizeOrganization, isPlanId, PLAN_PRICES, razorpayRequest, requiredEnv, timingSafeEqualHex } from '@/lib/subscription-server';
 
+export const runtime = 'nodejs';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const {
-      organizationId,
-      tierId,
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature,
-      payment_method,
-    } = body;
-
-    if (!organizationId || !tierId || !razorpay_order_id || !razorpay_payment_id) {
-      return NextResponse.json({ error: 'Missing required payment verification fields' }, { status: 400 });
+    const { organizationId, tierId, razorpay_order_id, razorpay_payment_id, razorpay_signature } = body ?? {};
+    if (!isPlanId(tierId) || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return NextResponse.json({ error: 'Missing or invalid payment verification fields.' }, { status: 400 });
+    }
+    const auth = await authorizeOrganization(req, organizationId);
+    const secret = requiredEnv('RAZORPAY_KEY_SECRET');
+    const expected = crypto.createHmac('sha256', secret).update(`${razorpay_order_id}|${razorpay_payment_id}`).digest('hex');
+    if (!timingSafeEqualHex(expected, String(razorpay_signature))) {
+      return NextResponse.json({ error: 'Payment signature verification failed.' }, { status: 400 });
     }
 
-    const keySecret = process.env.RAZORPAY_KEY_SECRET;
-
-    // 1. Signature Verification
-    if (keySecret && razorpay_signature) {
-      const generatedSignature = crypto
-        .createHmac('sha256', keySecret)
-        .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-        .digest('hex');
-
-      if (generatedSignature !== razorpay_signature) {
-        return NextResponse.json({ error: 'Invalid payment signature. Verification failed.' }, { status: 400 });
-      }
+    // Verify the order and payment directly with Razorpay; never activate from client claims alone.
+    const [order, payment] = await Promise.all([
+      razorpayRequest(`orders/${encodeURIComponent(razorpay_order_id)}`),
+      razorpayRequest(`payments/${encodeURIComponent(razorpay_payment_id)}`),
+    ]);
+    const plan = PLAN_PRICES[tierId];
+    if (order.id !== razorpay_order_id || order.status === 'created' && payment.status !== 'captured') {
+      return NextResponse.json({ error: 'Payment has not been captured yet.' }, { status: 409 });
+    }
+    if (Number(order.amount) !== plan.amountPaise || Number(payment.amount) !== plan.amountPaise ||
+        payment.order_id !== razorpay_order_id || payment.currency !== 'INR' ||
+        order.notes?.organizationId !== auth.organizationId || order.notes?.tierId !== tierId ||
+        payment.status !== 'captured') {
+      return NextResponse.json({ error: 'Payment details do not match this restaurant and plan.' }, { status: 400 });
     }
 
-    // 2. Compute Tier Limits & Features to save to Database
-    const tierLimits = {
-      starter: { maxTables: 10, maxStaff: 5, price: 300 },
-      professional: { maxTables: 30, maxStaff: 15, price: 799 },
-      enterprise: { maxTables: 9999, maxStaff: 9999, price: 1199 },
-    }[tierId as 'starter' | 'professional' | 'enterprise'] || { maxTables: 10, maxStaff: 5, price: 300 };
-
-    const featuresEnabled = {
-      kds_audio_alerts: tierId === 'professional' || tierId === 'enterprise',
-      whatsapp_invoices: tierId === 'professional' || tierId === 'enterprise',
-      loyalty_program: tierId === 'professional' || tierId === 'enterprise',
-      advanced_analytics: tierId === 'professional' || tierId === 'enterprise',
-      multi_outlet: tierId === 'enterprise',
-      white_label: tierId === 'enterprise',
-      multi_station_kds: tierId === 'enterprise',
-    };
-
-    const startDate = new Date();
-    const endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-    const receiptNumber = `RCP-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-
-    // 3. Database Execution
-    // If Supabase client or DB is configured, execute SQL query or stored procedure:
-    // e.g., await supabase.rpc('activate_organization_subscription', { ... })
-    // Or direct table updates:
-    // await supabase.from('organizations').update({ ... }).eq('id', organizationId);
-    // await supabase.from('payments').insert({ ... });
-
-    const updatedSubscription = {
-      organizationId,
-      tier: tierId,
-      status: 'active',
-      startDate: startDate.toISOString(),
-      endDate: endDate.toISOString(),
-      maxTables: tierLimits.maxTables,
-      maxStaff: tierLimits.maxStaff,
-      featuresEnabled,
-      payment: {
-        paymentId: razorpay_payment_id,
-        orderId: razorpay_order_id,
-        amount: tierLimits.price,
-        receiptNumber,
-        status: 'captured',
-        method: payment_method || 'Razorpay UPI/Card',
-        date: startDate.toLocaleDateString('en-IN', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-        }),
+    const receiptNumber = `FD-${new Date().getUTCFullYear()}-${razorpay_payment_id.slice(-8).toUpperCase()}`;
+    const rpcRes = await fetch(`${auth.supabaseUrl}/rest/v1/rpc/activate_organization_subscription`, {
+      method: 'POST',
+      headers: {
+        apikey: auth.serviceKey, Authorization: `Bearer ${auth.serviceKey}`,
+        'Content-Type': 'application/json',
       },
-    };
-
-    return NextResponse.json({
-      success: true,
-      message: `Organization successfully upgraded to ${tierId.toUpperCase()} tier!`,
-      subscription: updatedSubscription,
+      body: JSON.stringify({
+        p_org_id: auth.organizationId, p_tier: tierId, p_amount: plan.amountRupees,
+        p_razorpay_order_id: razorpay_order_id, p_razorpay_payment_id: razorpay_payment_id,
+        p_razorpay_signature: razorpay_signature, p_payment_method: payment.method || 'Razorpay Checkout',
+        p_receipt_number: receiptNumber,
+      }),
+      cache: 'no-store',
     });
+    const rpcData = await rpcRes.json().catch(() => null);
+    if (!rpcRes.ok || !rpcData?.success) {
+      console.error('Subscription activation RPC failed', rpcData);
+      return NextResponse.json({ error: 'Payment is captured, but subscription activation failed. Contact support with payment ID ' + razorpay_payment_id }, { status: 502 });
+    }
+    return NextResponse.json({ success: true, message: `Your restaurant is now subscribed to ${plan.name}.`, subscription: rpcData });
   } catch (error) {
-    console.error('Payment verification error:', error);
-    return NextResponse.json({ error: 'Server error during payment verification' }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Payment verification failed.';
+    const status = /sign in|session|owner|administrator|organizationId|ownership/i.test(message) ? 401 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

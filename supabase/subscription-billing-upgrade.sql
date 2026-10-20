@@ -77,6 +77,18 @@ CREATE TABLE IF NOT EXISTS organizations (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Restaurant owner/admin membership used by server-side subscription endpoints.
+-- Populate this table for existing restaurants before enabling paid subscriptions.
+CREATE TABLE IF NOT EXISTS organization_members (
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'cashier', 'waiter', 'kitchen', 'runner')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (organization_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_organization_members_user_role
+    ON organization_members (user_id, role);
+
 -- 4. Subscriptions History Table
 CREATE TABLE IF NOT EXISTS subscriptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -179,7 +191,47 @@ DECLARE
     v_max_tables INT;
     v_max_staff INT;
     v_features JSONB;
+    v_period_start TIMESTAMPTZ;
+    v_period_end TIMESTAMPTZ;
+    v_existing_tier subscription_tier_type;
+    v_existing_status subscription_status_type;
+    v_existing_end TIMESTAMPTZ;
 BEGIN
+    -- Idempotency: Razorpay may retry callbacks/webhooks. Never create a second subscription for one payment.
+    IF EXISTS (
+        SELECT 1 FROM payments
+        WHERE razorpay_payment_id = p_razorpay_payment_id
+          AND organization_id = p_org_id
+    ) THEN
+        SELECT subscription_end_date INTO v_existing_end
+          FROM organizations WHERE id = p_org_id;
+        RETURN jsonb_build_object(
+            'success', true,
+            'organization_id', p_org_id,
+            'tier', p_tier,
+            'status', 'active',
+            'expires_at', v_existing_end,
+            'message', 'Payment already applied'
+        );
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM organizations WHERE id = p_org_id) THEN
+        RAISE EXCEPTION 'Organization not found';
+    END IF;
+
+    SELECT subscription_tier, subscription_status, subscription_end_date
+      INTO v_existing_tier, v_existing_status, v_existing_end
+      FROM organizations WHERE id = p_org_id FOR UPDATE;
+
+    -- Same-plan renewal extends from the current expiry; an upgrade starts immediately.
+    IF v_existing_tier = p_tier AND v_existing_status = 'active'
+       AND v_existing_end IS NOT NULL AND v_existing_end > NOW() THEN
+        v_period_start := v_existing_end;
+    ELSE
+        v_period_start := NOW();
+    END IF;
+    v_period_end := v_period_start + INTERVAL '30 days';
+
     -- Set limits & features according to the subscribed tier
     IF p_tier = 'starter' THEN
         v_max_tables := 10;
@@ -224,7 +276,7 @@ BEGIN
     SET subscription_tier = p_tier,
         subscription_status = 'active',
         subscription_start_date = NOW(),
-        subscription_end_date = NOW() + INTERVAL '30 days',
+        subscription_end_date = v_period_end,
         max_tables_limit = v_max_tables,
         max_staff_limit = v_max_staff,
         features_enabled = v_features,
@@ -235,7 +287,7 @@ BEGIN
     INSERT INTO subscriptions (
         organization_id, tier, status, amount, current_period_start, current_period_end
     ) VALUES (
-        p_org_id, p_tier, 'active', p_amount, NOW(), NOW() + INTERVAL '30 days'
+        p_org_id, p_tier, 'active', p_amount, v_period_start, v_period_end
     ) RETURNING id INTO v_sub_id;
 
     -- Insert into Payments Table
@@ -253,7 +305,7 @@ BEGIN
         'tier', p_tier,
         'subscription_id', v_sub_id,
         'status', 'active',
-        'expires_at', (NOW() + INTERVAL '30 days')
+        'expires_at', v_period_end
     );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -268,3 +320,17 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- CREATE POLICY orders_select_policy ON orders
 --     FOR SELECT
 --     USING (is_org_subscription_active(organization_id) OR auth.jwt() ->> 'role' = 'org_admin');
+
+
+-- Keep membership and subscription activation server-only. The application server uses
+-- SUPABASE_SERVICE_ROLE_KEY after validating the user's session and membership.
+ALTER TABLE organization_members ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE organization_members FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE organization_members TO service_role;
+
+REVOKE ALL ON FUNCTION activate_organization_subscription(
+    UUID, subscription_tier_type, NUMERIC, TEXT, TEXT, TEXT, TEXT, TEXT
+) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION activate_organization_subscription(
+    UUID, subscription_tier_type, NUMERIC, TEXT, TEXT, TEXT, TEXT, TEXT
+) TO service_role;

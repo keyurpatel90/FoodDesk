@@ -5,43 +5,31 @@ const STORAGE_KEY = 'fooddesk_subscription_state_v1';
 const INVOICES_KEY = 'fooddesk_billing_invoices_v1';
 
 const DEFAULT_STATE: SubscriptionState = {
-  tier: 'professional',
-  status: 'active',
-  planName: 'Professional',
-  amount: 799,
+  tier: 'starter',
+  status: 'inactive',
+  planName: 'No active plan',
+  amount: 0,
   startDate: new Date().toISOString(),
-  expiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+  expiryDate: new Date(0).toISOString(),
   isTrial: false,
-  autoRenew: true,
-  razorpayPaymentId: 'pay_FD_init_982341',
-  razorpayOrderId: 'order_FD_init_4421',
+  autoRenew: false,
 };
 
-const INITIAL_INVOICES: PaymentInvoice[] = [
-  {
-    id: 'inv-101',
-    paymentId: 'pay_FD_init_982341',
-    orderId: 'order_FD_init_4421',
-    tierId: 'professional',
-    tierName: 'Professional Plan (Monthly)',
-    amount: 799,
-    date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toLocaleDateString('en-IN', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    }),
-    status: 'captured',
-    method: 'Razorpay UPI (Google Pay)',
-    receiptNumber: 'RCP-2026-0891',
-  },
-];
+const INITIAL_INVOICES: PaymentInvoice[] = [];
 
 export const subscriptionService = {
   getSubscription(): SubscriptionState {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored) as SubscriptionState;
+        // Reject legacy/demo activations created by the old mock Razorpay checkout.
+        if (parsed.razorpayPaymentId?.startsWith('pay_FD_') ||
+            parsed.razorpayPaymentId === 'trial_free_activation' ||
+            parsed.razorpayOrderId?.startsWith('order_FD_')) {
+          return DEFAULT_STATE;
+        }
+        return parsed;
       }
     } catch {
       // ignore
@@ -112,7 +100,8 @@ export const subscriptionService = {
     try {
       const stored = localStorage.getItem(INVOICES_KEY);
       if (stored) {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored);
+        return Array.isArray(parsed) ? parsed as PaymentInvoice[] : [];
       }
     } catch {
       // ignore
@@ -130,7 +119,7 @@ export const subscriptionService = {
     }
   },
 
-  activateTier(tierId: SubscriptionTierId, paymentId: string, orderId: string, method = 'Razorpay Checkout'): void {
+  activateTier(tierId: SubscriptionTierId, paymentId: string, orderId: string, method = 'Razorpay Checkout', verifiedExpiryDate?: string): void {
     const tier = SUBSCRIPTION_TIERS[tierId];
     const newState: SubscriptionState = {
       tier: tierId,
@@ -138,7 +127,7 @@ export const subscriptionService = {
       planName: tier.name,
       amount: tier.priceMonthly,
       startDate: new Date().toISOString(),
-      expiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      expiryDate: verifiedExpiryDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       isTrial: false,
       autoRenew: true,
       razorpayPaymentId: paymentId,
@@ -161,48 +150,13 @@ export const subscriptionService = {
       }),
       status: 'captured',
       method,
-      receiptNumber: `RCP-2026-${Math.floor(1000 + Math.random() * 9000)}`,
+      receiptNumber: `FD-${new Date().getUTCFullYear()}-${paymentId.slice(-8).toUpperCase()}`,
     };
     this.addInvoice(newInvoice);
 
-    // Sync to backend database endpoint if server is available
-    try {
-      fetch('/api/subscription/verify-payment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          organizationId: 'org_fooddesk_default',
-          tierId,
-          razorpay_order_id: orderId,
-          razorpay_payment_id: paymentId,
-          razorpay_signature: `sig_verified_${Date.now()}`,
-          payment_method: method,
-        }),
-      }).catch((err) => {
-        console.warn('Backend sync attempted; stored persistently in local database:', err);
-      });
-    } catch {
-      // offline / standalone mode fallback
-    }
+
   },
 
-  startFreeTrial(): void {
-    const tier = SUBSCRIPTION_TIERS.professional;
-    const newState: SubscriptionState = {
-      tier: 'professional',
-      status: 'trial',
-      planName: 'Professional (14-Day Free Trial)',
-      amount: 0,
-      startDate: new Date().toISOString(),
-      expiryDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
-      isTrial: true,
-      trialDaysRemaining: 14,
-      autoRenew: false,
-      razorpayPaymentId: 'trial_free_activation',
-      razorpayOrderId: 'order_trial_14d',
-    };
-    this.saveSubscription(newState);
-  },
 
   expireSubscription(): void {
     const current = this.getSubscription();
@@ -217,16 +171,4 @@ export const subscriptionService = {
     this.saveSubscription(DEFAULT_STATE);
   },
 
-  setTierDirectly(tierId: SubscriptionTierId): void {
-    const tier = SUBSCRIPTION_TIERS[tierId];
-    const current = this.getSubscription();
-    this.saveSubscription({
-      ...current,
-      tier: tierId,
-      status: 'active',
-      planName: tier.name,
-      amount: tier.priceMonthly,
-      expiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-    });
-  },
 };

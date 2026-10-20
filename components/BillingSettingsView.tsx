@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { SubscriptionState, PaymentInvoice } from '@/lib/subscription-types';
 import { subscriptionService } from '@/lib/subscription';
-import { razorpayService } from '@/lib/razorpay';
 import { SubscriptionCards } from './SubscriptionCards';
-import { CreditCard, ShieldCheck, Key, RefreshCw, Calendar, CheckCircle2 } from 'lucide-react';
+import { getFoodDeskOrganizationId, getSupabaseAccessToken } from '@/lib/subscription-client';
+import { SUBSCRIPTION_TIERS } from '@/lib/subscription-data';
+import { CreditCard, ShieldCheck, RefreshCw, Calendar, CheckCircle2 } from 'lucide-react';
 
 interface BillingSettingsViewProps {
   subscription: SubscriptionState;
@@ -14,18 +15,41 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
   subscription,
   onSubscriptionUpdated,
 }) => {
-  const [razorpayKey, setRazorpayKey] = useState(razorpayService.getKeyId());
-  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [currentSubscription, setCurrentSubscription] = useState(subscription);
   const invoices: PaymentInvoice[] = subscriptionService.getInvoices();
 
-  const handleSaveKey = (e: React.FormEvent) => {
-    e.preventDefault();
-    razorpayService.setKeyId(razorpayKey);
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 2500);
-  };
+  useEffect(() => { setCurrentSubscription(subscription); }, [subscription]);
 
-  const isActive = subscriptionService.isSubscriptionActive();
+  useEffect(() => {
+    let cancelled = false;
+    const organizationId = getFoodDeskOrganizationId();
+    const accessToken = getSupabaseAccessToken();
+    if (!organizationId || !accessToken) return;
+    fetch(`/api/subscription/status?orgId=${encodeURIComponent(organizationId)}`, {
+      headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store',
+    }).then(async (response) => {
+      const data = await response.json();
+      if (!response.ok || !data.success || cancelled) return;
+      const tier = typeof data.tier === 'string' && Object.prototype.hasOwnProperty.call(SUBSCRIPTION_TIERS, data.tier) ? data.tier : 'starter';
+      const normalized = {
+        ...subscriptionService.getSubscription(),
+        tier,
+        status: ['active', 'trial'].includes(data.status) ? data.status : 'inactive',
+        planName: data.planName || SUBSCRIPTION_TIERS[tier as keyof typeof SUBSCRIPTION_TIERS].name,
+        amount: data.isTrial ? 0 : SUBSCRIPTION_TIERS[tier as keyof typeof SUBSCRIPTION_TIERS].priceMonthly,
+        startDate: data.startDate || new Date(0).toISOString(),
+        expiryDate: data.expiryDate || new Date(0).toISOString(),
+        isTrial: !!data.isTrial,
+        autoRenew: !!data.autoRenew,
+      } as const;
+      subscriptionService.saveSubscription(normalized);
+      setCurrentSubscription(normalized);
+    }).catch((error) => console.error('Could not refresh subscription from server:', error));
+    return () => { cancelled = true; };
+  }, []);
+
+  const isActive = currentSubscription.status !== 'inactive' &&
+    new Date(currentSubscription.expiryDate).getTime() > Date.now();
 
   return (
     <div className="space-y-8 max-w-6xl mx-auto">
@@ -54,9 +78,9 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
           <div className="text-right flex flex-col items-end gap-2">
             <div>
               <div className="text-xs text-slate-500">Current Active Tier</div>
-              <div className="text-2xl font-black capitalize text-slate-900">{subscription.planName}</div>
+              <div className="text-2xl font-black capitalize text-slate-900">{currentSubscription.planName}</div>
               <div className="text-xs text-slate-500 tabular-nums">
-                ₹{subscription.amount} / month {subscription.isTrial && '(14-Day Free Trial)'}
+                ₹{currentSubscription.amount} / month {currentSubscription.isTrial && '(14-Day Free Trial)'}
               </div>
             </div>
 
@@ -78,7 +102,7 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
               <span>Next Renewal / Expiry</span>
             </div>
             <div className="font-bold text-slate-900 mt-1">
-              {new Date(subscription.expiryDate).toLocaleDateString('en-IN', {
+              {new Date(currentSubscription.expiryDate).toLocaleDateString('en-IN', {
                 day: 'numeric',
                 month: 'short',
                 year: 'numeric',
@@ -92,7 +116,7 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
               <span>Razorpay Transaction ID</span>
             </div>
             <div className="font-mono font-bold text-slate-900 mt-1 truncate">
-              {subscription.razorpayPaymentId || 'N/A'}
+              {currentSubscription.razorpayPaymentId || 'N/A'}
             </div>
           </div>
 
@@ -102,7 +126,7 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
               <span>Auto-Renewal</span>
             </div>
             <div className="font-bold text-emerald-700 mt-1">
-              {subscription.autoRenew ? 'Enabled via Razorpay Subscriptions' : 'Manual Renewal'}
+              {currentSubscription.autoRenew ? 'Enabled via Razorpay Subscriptions' : 'Manual Renewal'}
             </div>
           </div>
         </div>
@@ -118,55 +142,26 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
         </div>
 
         <SubscriptionCards
-          currentSubscription={subscription}
+          currentSubscription={currentSubscription}
           onSubscriptionUpdated={onSubscriptionUpdated}
         />
       </div>
 
-      {/* Razorpay Gateway Configuration */}
+      {/* Razorpay configuration is server-only; never collect secrets in the browser. */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
         <div className="flex items-center gap-2.5 mb-2">
           <div className="w-8 h-8 rounded-lg bg-[#0c2340] text-[#3395ff] flex items-center justify-center font-bold">
-            <Key className="w-4 h-4" />
+            <ShieldCheck className="w-4 h-4" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-slate-900">Razorpay Payment Gateway Credentials</h3>
-            <p className="text-xs text-slate-500">Configure your Razorpay Key ID for processing subscriptions</p>
+            <h3 className="text-sm font-bold text-slate-900">Secure Razorpay configuration</h3>
+            <p className="text-xs text-slate-500">Payment credentials are configured by the FoodDesk deployment administrator.</p>
           </div>
         </div>
-
-        <form onSubmit={handleSaveKey} className="max-w-xl space-y-3 mt-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Razorpay Key ID (Test or Live)
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={razorpayKey}
-                onChange={(e) => setRazorpayKey(e.target.value)}
-                placeholder="rzp_test_..."
-                className="flex-1 px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
-              >
-                Save Key
-              </button>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Safe fallback test gateway is enabled so you can test complete end-to-end payment flows with instant verification!
-            </p>
-          </div>
-
-          {saveSuccess && (
-            <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold rounded-lg flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              <span>Razorpay Key ID updated successfully!</span>
-            </div>
-          )}
-        </form>
+        <p className="text-xs text-slate-600 mt-3">
+          Configure <code>RAZORPAY_KEY_ID</code>, <code>RAZORPAY_KEY_SECRET</code>, and <code>RAZORPAY_WEBHOOK_SECRET</code>
+          in your server deployment environment. Do not enter API credentials in this browser or expose the secret key to restaurant users.
+        </p>
       </div>
 
       {/* Invoices & Receipts History */}
