@@ -32,7 +32,7 @@ export default function Shell({ brand, roleLabel, userName, modes, mode, onMode,
   const [drawer, setDrawer] = useState(false);
   const [menu, setMenu] = useState(false);
   const acct = useRef<HTMLDivElement>(null);
-  const access = subscriptionService.canRoleAccessApp(currentRole);
+  const access = subscriptionService.canRoleAccessApp(roleLabel);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => { if (acct.current && !acct.current.contains(e.target as Node)) setMenu(false); };
@@ -53,7 +53,7 @@ export default function Shell({ brand, roleLabel, userName, modes, mode, onMode,
   if (!access.allowed || subscription.status === 'inactive') {
     return (
       <SubscriptionLockout
-        currentRole={currentRole}
+        currentRole={roleLabel}
         subscription={subscription}
         onSwitchRole={setCurrentRole}
         onSubscriptionUpdated={() => setSubscription(subscriptionService.getSubscription())}
