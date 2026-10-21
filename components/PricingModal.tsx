@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { SubscriptionState } from '@/lib/subscription-types';
 import { SubscriptionCards } from './SubscriptionCards';

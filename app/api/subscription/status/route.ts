@@ -1,35 +1,30 @@
 import { NextResponse } from 'next/server';
-import { authorizeOrganization } from '@/lib/subscription-server';
+import { handle } from '@/lib/server/http';
+import { requireOrg } from '@/lib/server/auth';
+import { buildSubscriptionState, listPayments, loadOrganization, toInvoice } from '@/lib/server/billing';
 
+export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+
+/**
+ * Current subscription for the caller's restaurant, read from the database.
+ * Any signed-in member can read the status (staff need it to see the "expired" screen);
+ * payment history is only returned to admins.
+ */
 export async function GET(req: Request) {
-  try {
-    const url = new URL(req.url);
-    const orgId = url.searchParams.get('orgId');
-    const auth = await authorizeOrganization(req, orgId);
-    const query = new URL(`${auth.supabaseUrl}/rest/v1/organizations`);
-    query.searchParams.set('id', `eq.${auth.organizationId}`);
-    query.searchParams.set('select', 'id,name,subscription_tier,subscription_status,subscription_start_date,subscription_end_date,trial_ends_at,max_tables_limit,max_staff_limit,features_enabled,auto_renew');
-    query.searchParams.set('limit', '1');
-    const response = await fetch(query, {
-      headers: { apikey: auth.serviceKey, Authorization: `Bearer ${auth.serviceKey}` }, cache: 'no-store',
-    });
-    const rows = await response.json();
-    if (!response.ok) return NextResponse.json({ error: 'Could not read subscription status.' }, { status: 502 });
-    const org = rows?.[0];
-    if (!org) return NextResponse.json({ error: 'Restaurant organization not found.' }, { status: 404 });
-    const end = org.subscription_status === 'trial' ? org.trial_ends_at : org.subscription_end_date;
-    const expired = !end || new Date(end).getTime() <= Date.now();
-    const status = expired && ['active', 'trial'].includes(org.subscription_status) ? 'inactive' : org.subscription_status;
+  return handle(async () => {
+    const ctx = await requireOrg(req);
+    const org = await loadOrganization(ctx.organizationId);
+    const payments = await listPayments(ctx.organizationId);
+    const latestCaptured = payments.find((p) => p.status === 'captured');
+
     return NextResponse.json({
-      success: true, organizationId: org.id, tier: org.subscription_tier, status,
-      planName: org.subscription_tier, startDate: org.subscription_start_date,
-      expiryDate: end, maxTables: org.max_tables_limit, maxStaff: org.max_staff_limit,
-      featuresEnabled: org.features_enabled || {}, autoRenew: !!org.auto_renew,
-      isTrial: status === 'trial',
+      success: true,
+      organizationId: ctx.organizationId,
+      isAdmin: ctx.isAdmin,
+      subscription: buildSubscriptionState(org, latestCaptured),
+      invoices: ctx.isAdmin ? payments.map(toInvoice) : [],
+      serverTime: new Date().toISOString(),
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to fetch subscription status.';
-    return NextResponse.json({ error: message }, { status: 401 });
-  }
+  });
 }

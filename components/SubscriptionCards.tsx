@@ -1,8 +1,10 @@
+'use client';
+
 import React, { useState } from 'react';
 import { SUBSCRIPTION_TIERS } from '@/lib/subscription-data';
 import { TierConfig, SubscriptionState } from '@/lib/subscription-types';
 import { RazorpayModal } from './RazorpayModal';
-import { subscriptionService } from '@/lib/subscription';
+import { getPlanAction, subscriptionService } from '@/lib/subscription';
 import { Check, Sparkles, Shield, ArrowUpRight } from 'lucide-react';
 
 interface SubscriptionCardsProps {
@@ -16,11 +18,19 @@ export const SubscriptionCards: React.FC<SubscriptionCardsProps> = ({
 }) => {
   const [selectedTierForPayment, setSelectedTierForPayment] = useState<TierConfig | null>(null);
 
-  const handleRazorpaySuccess = (paymentId: string, orderId: string, expiryDate?: string) => {
-    subscriptionService.activateTier(selectedTierForPayment?.id || currentSubscription.tier, paymentId, orderId, 'Razorpay Checkout', expiryDate);
-    setSelectedTierForPayment(null);
+  const loaded = subscriptionService.isLoaded();
+  const actions = {
+    starter: getPlanAction(currentSubscription, 'starter', loaded),
+    professional: getPlanAction(currentSubscription, 'professional', loaded),
+    enterprise: getPlanAction(currentSubscription, 'enterprise', loaded),
+  };
+
+  // The service has already stored the server-confirmed subscription by the time this runs.
+  const handleRazorpaySuccess = () => {
     onSubscriptionUpdated();
   };
+
+  const trialDays = currentSubscription.isTrial ? currentSubscription.trialDaysRemaining ?? currentSubscription.daysRemaining : undefined;
 
   return (
     <div className="w-full">
@@ -60,12 +70,13 @@ export const SubscriptionCards: React.FC<SubscriptionCardsProps> = ({
           <div className="pt-4 border-t border-slate-100">
             <button
               onClick={() => setSelectedTierForPayment(SUBSCRIPTION_TIERS.starter)}
-              className="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-900 rounded-xl font-bold text-sm transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+              disabled={actions.starter.disabled}
+              className="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-900 rounded-xl font-bold text-sm transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-slate-100"
             >
-              <span>{currentSubscription.tier === 'starter' ? 'Renew Starter' : 'Get Started'}</span>
-              <ArrowUpRight className="w-4 h-4 text-slate-500" />
+              <span>{actions.starter.label}</span>
+              {!actions.starter.disabled && <ArrowUpRight className="w-4 h-4 text-slate-500" />}
             </button>
-            <div className="text-center text-[11px] text-slate-400 mt-2">Instant Razorpay Checkout</div>
+            <div className="text-center text-[11px] text-slate-400 mt-2">{actions.starter.hint ?? 'Instant Razorpay Checkout'}</div>
           </div>
         </div>
 
@@ -83,6 +94,11 @@ export const SubscriptionCards: React.FC<SubscriptionCardsProps> = ({
               {currentSubscription.tier === 'professional' && currentSubscription.status === 'active' && (
                 <span className="text-[11px] font-bold text-violet-900 bg-white/90 px-2.5 py-0.5 rounded-full">
                   Current Plan
+                </span>
+              )}
+              {currentSubscription.tier === 'professional' && currentSubscription.isTrial && (
+                <span className="text-[11px] font-bold text-violet-900 bg-white/90 px-2.5 py-0.5 rounded-full">
+                  Free trial{trialDays !== undefined ? ` · ${trialDays} day${trialDays === 1 ? '' : 's'} left` : ''}
                 </span>
               )}
             </div>
@@ -110,13 +126,15 @@ export const SubscriptionCards: React.FC<SubscriptionCardsProps> = ({
           <div className="pt-4 border-t border-white/20 space-y-2">
             <button
               onClick={() => setSelectedTierForPayment(SUBSCRIPTION_TIERS.professional)}
-              className="w-full py-3 px-4 bg-white hover:bg-violet-50 text-[#6c5ce7] rounded-xl font-bold text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
+              disabled={actions.professional.disabled}
+              className="w-full py-3 px-4 bg-white hover:bg-violet-50 text-[#6c5ce7] rounded-xl font-bold text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
             >
-              <span>{currentSubscription.tier === 'professional' ? 'Renew Professional' : 'Choose Professional'}</span>
-              <Shield className="w-4 h-4" />
+              <span>{actions.professional.label}</span>
+              {!actions.professional.disabled && <Shield className="w-4 h-4" />}
             </button>
-
-
+            {actions.professional.hint && (
+              <div className="text-center text-[11px] text-violet-100">{actions.professional.hint}</div>
+            )}
           </div>
         </div>
 
@@ -154,12 +172,13 @@ export const SubscriptionCards: React.FC<SubscriptionCardsProps> = ({
           <div className="pt-4 border-t border-slate-100">
             <button
               onClick={() => setSelectedTierForPayment(SUBSCRIPTION_TIERS.enterprise)}
-              className="w-full py-3 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-sm transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+              disabled={actions.enterprise.disabled}
+              className="w-full py-3 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-sm transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              <span>{currentSubscription.tier === 'enterprise' ? 'Renew Enterprise' : 'Subscribe via Razorpay'}</span>
-              <ArrowUpRight className="w-4 h-4 text-slate-400" />
+              <span>{actions.enterprise.label}</span>
+              {!actions.enterprise.disabled && <ArrowUpRight className="w-4 h-4 text-slate-400" />}
             </button>
-            <div className="text-center text-[11px] text-slate-400 mt-2">Unlimited Outlets & Tables</div>
+            <div className="text-center text-[11px] text-slate-400 mt-2">{actions.enterprise.hint ?? 'Unlimited Outlets & Tables'}</div>
           </div>
         </div>
       </div>

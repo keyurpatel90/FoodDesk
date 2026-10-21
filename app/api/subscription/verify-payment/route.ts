@@ -1,62 +1,46 @@
 import { NextResponse } from 'next/server';
-import crypto from 'crypto';
-import { authorizeOrganization, isPlanId, PLAN_PRICES, razorpayRequest, requiredEnv, timingSafeEqualHex } from '@/lib/subscription-server';
+import { handle, HttpError } from '@/lib/server/http';
+import { requireOrg } from '@/lib/server/auth';
+import { finalizePayment } from '@/lib/server/billing';
+import { verifyCheckoutSignature } from '@/lib/server/razorpay-server';
 
+export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+
+/**
+ * Step 3 of paying: Razorpay Checkout succeeded in the browser and hands us
+ * { razorpay_order_id, razorpay_payment_id, razorpay_signature }.
+ * We verify the signature (mandatory), re-check the payment with Razorpay, then activate the plan in the DB.
+ * The tier and amount are NOT taken from the browser; they come from the order we created.
+ */
 export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-    const { organizationId, tierId, razorpay_order_id, razorpay_payment_id, razorpay_signature } = body ?? {};
-    if (!isPlanId(tierId) || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-      return NextResponse.json({ error: 'Missing or invalid payment verification fields.' }, { status: 400 });
-    }
-    const auth = await authorizeOrganization(req, organizationId);
-    const secret = requiredEnv('RAZORPAY_KEY_SECRET');
-    const expected = crypto.createHmac('sha256', secret).update(`${razorpay_order_id}|${razorpay_payment_id}`).digest('hex');
-    if (!timingSafeEqualHex(expected, String(razorpay_signature))) {
-      return NextResponse.json({ error: 'Payment signature verification failed.' }, { status: 400 });
+  return handle(async () => {
+    const ctx = await requireOrg(req, { admin: true });
+
+    const body = await req.json().catch(() => ({}));
+    const orderId = body?.razorpay_order_id;
+    const paymentId = body?.razorpay_payment_id;
+    const signature = body?.razorpay_signature;
+    if (![orderId, paymentId, signature].every((v) => typeof v === 'string' && v.length > 0)) {
+      throw new HttpError(400, 'Missing payment details.', 'MISSING_FIELDS');
     }
 
-    // Verify the order and payment directly with Razorpay; never activate from client claims alone.
-    const [order, payment] = await Promise.all([
-      razorpayRequest(`orders/${encodeURIComponent(razorpay_order_id)}`),
-      razorpayRequest(`payments/${encodeURIComponent(razorpay_payment_id)}`),
-    ]);
-    const plan = PLAN_PRICES[tierId];
-    if (order.id !== razorpay_order_id || order.status === 'created' && payment.status !== 'captured') {
-      return NextResponse.json({ error: 'Payment has not been captured yet.' }, { status: 409 });
-    }
-    if (Number(order.amount) !== plan.amountPaise || Number(payment.amount) !== plan.amountPaise ||
-        payment.order_id !== razorpay_order_id || payment.currency !== 'INR' ||
-        order.notes?.organizationId !== auth.organizationId || order.notes?.tierId !== tierId ||
-        payment.status !== 'captured') {
-      return NextResponse.json({ error: 'Payment details do not match this restaurant and plan.' }, { status: 400 });
+    if (!verifyCheckoutSignature(orderId, paymentId, signature)) {
+      throw new HttpError(400, 'Payment signature could not be verified.', 'INVALID_SIGNATURE');
     }
 
-    const receiptNumber = `FD-${new Date().getUTCFullYear()}-${razorpay_payment_id.slice(-8).toUpperCase()}`;
-    const rpcRes = await fetch(`${auth.supabaseUrl}/rest/v1/rpc/activate_organization_subscription`, {
-      method: 'POST',
-      headers: {
-        apikey: auth.serviceKey, Authorization: `Bearer ${auth.serviceKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        p_org_id: auth.organizationId, p_tier: tierId, p_amount: plan.amountRupees,
-        p_razorpay_order_id: razorpay_order_id, p_razorpay_payment_id: razorpay_payment_id,
-        p_razorpay_signature: razorpay_signature, p_payment_method: payment.method || 'Razorpay Checkout',
-        p_receipt_number: receiptNumber,
-      }),
-      cache: 'no-store',
+    const result = await finalizePayment({
+      orderId,
+      paymentId,
+      signature,
+      expectedOrganizationId: ctx.organizationId,
     });
-    const rpcData = await rpcRes.json().catch(() => null);
-    if (!rpcRes.ok || !rpcData?.success) {
-      console.error('Subscription activation RPC failed', rpcData);
-      return NextResponse.json({ error: 'Payment is captured, but subscription activation failed. Contact support with payment ID ' + razorpay_payment_id }, { status: 502 });
-    }
-    return NextResponse.json({ success: true, message: `Your restaurant is now subscribed to ${plan.name}.`, subscription: rpcData });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Payment verification failed.';
-    const status = /sign in|session|owner|administrator|organizationId|ownership/i.test(message) ? 401 : 500;
-    return NextResponse.json({ error: message }, { status });
-  }
+
+    return NextResponse.json({
+      success: true,
+      alreadyProcessed: result.alreadyProcessed,
+      subscription: result.subscription,
+      invoice: result.invoice,
+    });
+  });
 }

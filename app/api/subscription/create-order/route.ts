@@ -1,35 +1,61 @@
 import { NextResponse } from 'next/server';
-import { authorizeOrganization, isPlanId, PLAN_PRICES, razorpayRequest } from '@/lib/subscription-server';
+import { SUBSCRIPTION_TIERS } from '@/lib/subscription-data';
+import type { CheckoutOrder } from '@/lib/subscription-types';
+import { handle, HttpError } from '@/lib/server/http';
+import { requireOrg } from '@/lib/server/auth';
+import { loadOrganization, toPricingRow } from '@/lib/server/billing';
+import { isTierId, quoteChange } from '@/lib/server/pricing';
+import { createRazorpayOrder, getRazorpayConfig } from '@/lib/server/razorpay-server';
 
+export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+
+/**
+ * Step 1 of paying. The browser only says WHICH plan it wants; the server decides the price
+ * (new / renew / upgrade-with-credit), creates a real Razorpay order, and tags it with the
+ * organization + tier so the payment can be matched safely later.
+ */
 export async function POST(req: Request) {
-  try {
-    const body: unknown = await req.json();
-    if (typeof body !== 'object' || body === null) {
-      return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
+  return handle(async () => {
+    const ctx = await requireOrg(req, { admin: true });
+
+    const body = await req.json().catch(() => ({}));
+    const tierId = body?.tierId;
+    if (!isTierId(tierId)) throw new HttpError(400, 'Invalid subscription plan selected.', 'INVALID_TIER');
+
+    const org = await loadOrganization(ctx.organizationId);
+    const quote = quoteChange(toPricingRow(org), tierId);
+    if (quote.kind === 'blocked_downgrade') {
+      throw new HttpError(409, quote.blockedReason ?? 'This plan change is not available yet.', 'DOWNGRADE_BLOCKED');
     }
-    const requestBody = body as { tierId?: unknown; organizationId?: unknown };
-    const tierId: unknown = requestBody.tierId;
-    if (!isPlanId(tierId)) return NextResponse.json({ error: 'Invalid subscription plan.' }, { status: 400 });
-    const auth = await authorizeOrganization(req, requestBody.organizationId);
-    const plan = PLAN_PRICES[tierId];
-    const order = await razorpayRequest('orders', {
-      method: 'POST',
-      body: JSON.stringify({
-        amount: plan.amountPaise, currency: 'INR', receipt: `fd_${Date.now()}_${auth.organizationId.slice(0, 8)}`,
-        notes: { organizationId: auth.organizationId, tierId, userId: auth.userId },
-      }),
+
+    const { keyId } = getRazorpayConfig();
+    const tier = SUBSCRIPTION_TIERS[tierId];
+    const order = await createRazorpayOrder({
+      amountPaise: quote.amountPaise,
+      // Razorpay receipts are limited to 40 characters.
+      receipt: `fd_${ctx.organizationId.replace(/-/g, '').slice(0, 8)}_${Date.now().toString(36)}`,
+      notes: {
+        organization_id: ctx.organizationId,
+        tier_id: tierId,
+        kind: quote.kind,
+        credit_paise: String(quote.creditPaise),
+        product: 'fooddesk_subscription',
+      },
     });
-    if (!order?.id || Number(order.amount) !== plan.amountPaise || order.currency !== 'INR') {
-      return NextResponse.json({ error: 'Razorpay returned an invalid order.' }, { status: 502 });
-    }
-    return NextResponse.json({
-      success: true, orderId: order.id, amount: order.amount, currency: order.currency,
-      keyId: process.env.RAZORPAY_KEY_ID, tierName: plan.name,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Could not create payment order.';
-    const status = /sign in|session|owner|administrator|organizationId|ownership/i.test(message) ? 401 : 500;
-    return NextResponse.json({ error: message }, { status });
-  }
+
+    const payload: CheckoutOrder = {
+      orderId: order.id,
+      amountPaise: order.amount,
+      currency: 'INR',
+      keyId,
+      tierId,
+      tierName: tier.name,
+      kind: quote.kind,
+      listPricePaise: quote.listPricePaise,
+      creditPaise: quote.creditPaise,
+      prefill: { name: ctx.name, email: ctx.email },
+    };
+    return NextResponse.json({ success: true, order: payload });
+  });
 }

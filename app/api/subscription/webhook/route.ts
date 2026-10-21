@@ -1,56 +1,66 @@
 import { NextResponse } from 'next/server';
-import crypto from 'crypto';
-import { PLAN_PRICES, isPlanId, requiredEnv, razorpayRequest, timingSafeEqualHex } from '@/lib/subscription-server';
+import { finalizePayment, NotOurOrderError } from '@/lib/server/billing';
+import { verifyWebhookSignature } from '@/lib/server/razorpay-server';
+import { HttpError } from '@/lib/server/http';
 
+export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+
+/**
+ * Razorpay -> FoodDesk safety net. If the owner pays but closes the tab (or loses network) before
+ * /verify-payment runs, this still activates the plan. Same idempotent code path as /verify-payment.
+ *
+ * Dashboard setup: Settings -> Webhooks -> URL https://<your-domain>/api/subscription/webhook,
+ * secret = RAZORPAY_WEBHOOK_SECRET, events: order.paid, payment.captured, payment.failed.
+ */
 export async function POST(req: Request) {
+  const rawBody = await req.text(); // must be the exact raw body for the signature check
+  if (!verifyWebhookSignature(rawBody, req.headers.get('x-razorpay-signature'))) {
+    return NextResponse.json({ error: 'Invalid webhook signature' }, { status: 400 });
+  }
+
+  let event: {
+    event?: string;
+    payload?: {
+      order?: { entity?: { id?: string } };
+      payment?: { entity?: { id?: string; order_id?: string; error_description?: string } };
+    };
+  };
   try {
-    const rawBody = await req.text();
-    const signature = req.headers.get('x-razorpay-signature') || '';
-    const webhookSecret = requiredEnv('RAZORPAY_WEBHOOK_SECRET');
-    const expected = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
-    if (!timingSafeEqualHex(expected, signature)) {
-      return NextResponse.json({ error: 'Invalid webhook signature.' }, { status: 400 });
-    }
-    const event = JSON.parse(rawBody);
-    if (event.event === 'payment.captured') {
-      const payment = event.payload?.payment?.entity;
-      if (!payment?.id || !payment?.order_id || payment.status !== 'captured') {
-        return NextResponse.json({ received: true, ignored: true });
+    event = JSON.parse(rawBody);
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+
+  try {
+    switch (event.event) {
+      case 'order.paid':
+      case 'payment.captured': {
+        const payment = event.payload?.payment?.entity;
+        const orderId = event.payload?.order?.entity?.id ?? payment?.order_id;
+        if (!orderId || !payment?.id) break;
+        const result = await finalizePayment({ orderId, paymentId: payment.id });
+        console.log(
+          `[razorpay webhook] ${event.event}: payment ${payment.id} ${result.alreadyProcessed ? 'already processed' : 'activated'} for org ${result.organizationId}`
+        );
+        break;
       }
-      const order = await razorpayRequest(`orders/${encodeURIComponent(payment.order_id)}`);
-      const organizationId = order.notes?.organizationId;
-      const tierId = order.notes?.tierId;
-      if (!organizationId || !isPlanId(tierId)) {
-        console.error('Captured payment missing FoodDesk order metadata', payment.id);
-        return NextResponse.json({ received: true, ignored: true });
+      case 'payment.failed': {
+        const payment = event.payload?.payment?.entity;
+        console.warn(`[razorpay webhook] payment failed: ${payment?.id} - ${payment?.error_description}`);
+        break;
       }
-      const plan = PLAN_PRICES[tierId];
-      if (Number(payment.amount) !== plan.amountPaise || Number(order.amount) !== plan.amountPaise || payment.currency !== 'INR') {
-        return NextResponse.json({ error: 'Captured payment amount does not match plan.' }, { status: 400 });
-      }
-      const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '');
-      const serviceKey = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
-      const rpc = await fetch(`${supabaseUrl}/rest/v1/rpc/activate_organization_subscription`, {
-        method: 'POST',
-        headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          p_org_id: organizationId, p_tier: tierId, p_amount: plan.amountRupees,
-          p_razorpay_order_id: payment.order_id, p_razorpay_payment_id: payment.id,
-          p_razorpay_signature: null, p_payment_method: payment.method || 'Razorpay Checkout',
-          p_receipt_number: `FD-${new Date().getUTCFullYear()}-${payment.id.slice(-8).toUpperCase()}`,
-        }),
-        cache: 'no-store',
-      });
-      if (!rpc.ok) {
-        console.error('Failed to activate subscription from Razorpay webhook', await rpc.text());
-        return NextResponse.json({ error: 'Could not apply captured payment.' }, { status: 502 });
-      }
+      default:
+        // Other events (refunds, etc.) are acknowledged but not acted on.
+        break;
     }
     return NextResponse.json({ received: true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Webhook processing failed.';
-    console.error('Razorpay webhook error:', message);
-    return NextResponse.json({ error: message }, { status: 500 });
+  } catch (err) {
+    // Orders created by some other app on the same Razorpay account: acknowledge so Razorpay stops retrying.
+    if (err instanceof NotOurOrderError) return NextResponse.json({ received: true, ignored: true });
+    console.error('[razorpay webhook] processing failed:', err);
+    // Non-2xx makes Razorpay retry, which is what we want for transient failures.
+    const status = err instanceof HttpError && err.status < 500 && err.status !== 402 ? 200 : 500;
+    return NextResponse.json({ error: 'Webhook processing failed' }, { status });
   }
 }

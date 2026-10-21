@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { UserRole, SubscriptionState, SubscriptionTierId } from '@/lib/subscription-types';
 import { subscriptionService } from '@/lib/subscription';
@@ -33,14 +35,14 @@ export const DemoControlBar: React.FC<DemoControlBarProps> = ({
     if (tier === 'inactive') {
       subscriptionService.expireSubscription();
     } else {
-      // Plan changes must go through verified Razorpay checkout, never a demo/local switch.
-      onOpenUpgradeModal();
-      return;
+      subscriptionService.setTierDirectly(tier);
     }
     onSubscriptionChange();
   };
 
   const isActive = subscriptionService.isSubscriptionActive();
+  // Tier simulation only previews the UI locally; it cannot grant a real plan. Hidden unless demo mode is on.
+  const showSimulator = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
 
   return (
     <div className="bg-slate-900 text-slate-100 border-b border-slate-800 text-xs px-4 py-2.5">
@@ -71,9 +73,10 @@ export const DemoControlBar: React.FC<DemoControlBarProps> = ({
 
         {/* Subscription Simulator Controls */}
         <div className="flex items-center gap-3">
+          {showSimulator && (<>
           <div className="flex items-center gap-1.5 text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
             <Shield className="w-3.5 h-3.5 text-amber-400" />
-            <span>Subscription Test:</span>
+            <span>Simulate Tier:</span>
           </div>
 
           <div className="flex items-center gap-1 bg-slate-800/80 p-0.5 rounded-lg border border-slate-700">
@@ -124,6 +127,8 @@ export const DemoControlBar: React.FC<DemoControlBarProps> = ({
             </button>
           </div>
 
+          </>)}
+
           {/* Quick Pay / Upgrade Button */}
           <button
             onClick={onOpenUpgradeModal}
@@ -133,18 +138,6 @@ export const DemoControlBar: React.FC<DemoControlBarProps> = ({
             <span className="hidden md:inline">Razorpay Checkout</span>
             <span className="md:hidden">Pay</span>
           </button>
-
-          {/* Download Next.js Codebase ZIP Export */}
-          <a
-            href="/fooddesk-subscription-nextjs.zip"
-            download="fooddesk-subscription-nextjs.zip"
-            title="Download complete Next.js ready code package"
-            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-md shadow-xs transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-          >
-            <span className="text-xs">⬇️</span>
-            <span className="hidden sm:inline">Export Next.js ZIP</span>
-            <span className="sm:hidden">ZIP</span>
-          </a>
 
           {/* Quick Mock Order for KDS testing */}
           <button

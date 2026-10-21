@@ -37,6 +37,25 @@ export interface SubscriptionState {
   autoRenew: boolean;
   razorpayPaymentId?: string;
   razorpayOrderId?: string;
+  /** Whole days left in the current period (0 when expired). Computed by the server. */
+  daysRemaining?: number;
+}
+
+/** What buying a given plan means for the restaurant's current subscription. */
+export type PlanChangeKind = 'new' | 'renew' | 'upgrade' | 'blocked_downgrade';
+
+/** Returned by POST /api/subscription/create-order; everything Razorpay Checkout needs. */
+export interface CheckoutOrder {
+  orderId: string;
+  amountPaise: number;
+  currency: 'INR';
+  keyId: string;
+  tierId: SubscriptionTierId;
+  tierName: string;
+  kind: PlanChangeKind;
+  listPricePaise: number;
+  creditPaise: number;
+  prefill?: { name?: string; email?: string };
 }
 
 export interface PaymentInvoice {

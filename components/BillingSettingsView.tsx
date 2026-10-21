@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
+'use client';
+
+import React from 'react';
 import { SubscriptionState, PaymentInvoice } from '@/lib/subscription-types';
 import { subscriptionService } from '@/lib/subscription';
 import { SubscriptionCards } from './SubscriptionCards';
-import { getFoodDeskOrganizationId, getSupabaseAccessToken } from '@/lib/subscription-client';
-import { SUBSCRIPTION_TIERS } from '@/lib/subscription-data';
-import { CreditCard, ShieldCheck, RefreshCw, Calendar, CheckCircle2 } from 'lucide-react';
+import { CreditCard, ShieldCheck, RefreshCw, Calendar, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 interface BillingSettingsViewProps {
   subscription: SubscriptionState;
@@ -15,41 +15,10 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
   subscription,
   onSubscriptionUpdated,
 }) => {
-  const [currentSubscription, setCurrentSubscription] = useState(subscription);
   const invoices: PaymentInvoice[] = subscriptionService.getInvoices();
-
-  useEffect(() => { setCurrentSubscription(subscription); }, [subscription]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const organizationId = getFoodDeskOrganizationId();
-    const accessToken = getSupabaseAccessToken();
-    if (!organizationId || !accessToken) return;
-    fetch(`/api/subscription/status?orgId=${encodeURIComponent(organizationId)}`, {
-      headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store',
-    }).then(async (response) => {
-      const data = await response.json();
-      if (!response.ok || !data.success || cancelled) return;
-      const tier = typeof data.tier === 'string' && Object.prototype.hasOwnProperty.call(SUBSCRIPTION_TIERS, data.tier) ? data.tier : 'starter';
-      const normalized = {
-        ...subscriptionService.getSubscription(),
-        tier,
-        status: ['active', 'trial'].includes(data.status) ? data.status : 'inactive',
-        planName: data.planName || SUBSCRIPTION_TIERS[tier as keyof typeof SUBSCRIPTION_TIERS].name,
-        amount: data.isTrial ? 0 : SUBSCRIPTION_TIERS[tier as keyof typeof SUBSCRIPTION_TIERS].priceMonthly,
-        startDate: data.startDate || new Date(0).toISOString(),
-        expiryDate: data.expiryDate || new Date(0).toISOString(),
-        isTrial: !!data.isTrial,
-        autoRenew: !!data.autoRenew,
-      } as const;
-      subscriptionService.saveSubscription(normalized);
-      setCurrentSubscription(normalized);
-    }).catch((error) => console.error('Could not refresh subscription from server:', error));
-    return () => { cancelled = true; };
-  }, []);
-
-  const isActive = currentSubscription.status !== 'inactive' &&
-    new Date(currentSubscription.expiryDate).getTime() > Date.now();
+  const isActive = subscriptionService.isSubscriptionActive();
+  const daysLeft = subscription.daysRemaining ?? 0;
+  const expiringSoon = isActive && daysLeft <= 5;
 
   return (
     <div className="space-y-8 max-w-6xl mx-auto">
@@ -78,21 +47,25 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
           <div className="text-right flex flex-col items-end gap-2">
             <div>
               <div className="text-xs text-slate-500">Current Active Tier</div>
-              <div className="text-2xl font-black capitalize text-slate-900">{currentSubscription.planName}</div>
+              <div className="text-2xl font-black capitalize text-slate-900">{subscription.planName}</div>
               <div className="text-xs text-slate-500 tabular-nums">
-                ₹{currentSubscription.amount} / month {currentSubscription.isTrial && '(14-Day Free Trial)'}
+                ₹{subscription.amount} / month {subscription.isTrial && '(14-Day Free Trial)'}
               </div>
             </div>
 
-            <a
-              href="/fooddesk-subscription-nextjs.zip"
-              download="fooddesk-subscription-nextjs.zip"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors shadow-2xs cursor-pointer"
-            >
-              <span>⬇️ Download Next.js Codebase ZIP</span>
-            </a>
           </div>
         </div>
+
+        {(expiringSoon || !isActive) && subscriptionService.isLoaded() && (
+          <div className="mt-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+            <span>
+              {isActive
+                ? `Your plan ends in ${daysLeft} day${daysLeft === 1 ? '' : 's'}. Renew below to avoid any interruption for your staff.`
+                : 'Your subscription has expired. Staff access is locked until you renew a plan below.'}
+            </span>
+          </div>
+        )}
 
         {/* Subscription Meta Strip */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 text-xs">
@@ -102,11 +75,13 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
               <span>Next Renewal / Expiry</span>
             </div>
             <div className="font-bold text-slate-900 mt-1">
-              {new Date(currentSubscription.expiryDate).toLocaleDateString('en-IN', {
-                day: 'numeric',
-                month: 'short',
-                year: 'numeric',
-              })}
+              {subscriptionService.isLoaded()
+                ? new Date(subscription.expiryDate).toLocaleDateString('en-IN', {
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
+                  })
+                : '…'}
             </div>
           </div>
 
@@ -116,7 +91,7 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
               <span>Razorpay Transaction ID</span>
             </div>
             <div className="font-mono font-bold text-slate-900 mt-1 truncate">
-              {currentSubscription.razorpayPaymentId || 'N/A'}
+              {subscription.razorpayPaymentId || 'N/A'}
             </div>
           </div>
 
@@ -125,8 +100,8 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Auto-Renewal</span>
             </div>
-            <div className="font-bold text-emerald-700 mt-1">
-              {currentSubscription.autoRenew ? 'Enabled via Razorpay Subscriptions' : 'Manual Renewal'}
+            <div className="font-bold text-slate-900 mt-1">
+              {subscription.autoRenew ? 'Enabled' : 'Manual: renew below before the expiry date'}
             </div>
           </div>
         </div>
@@ -142,26 +117,9 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
         </div>
 
         <SubscriptionCards
-          currentSubscription={currentSubscription}
+          currentSubscription={subscription}
           onSubscriptionUpdated={onSubscriptionUpdated}
         />
-      </div>
-
-      {/* Razorpay configuration is server-only; never collect secrets in the browser. */}
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
-        <div className="flex items-center gap-2.5 mb-2">
-          <div className="w-8 h-8 rounded-lg bg-[#0c2340] text-[#3395ff] flex items-center justify-center font-bold">
-            <ShieldCheck className="w-4 h-4" />
-          </div>
-          <div>
-            <h3 className="text-sm font-bold text-slate-900">Secure Razorpay configuration</h3>
-            <p className="text-xs text-slate-500">Payment credentials are configured by the FoodDesk deployment administrator.</p>
-          </div>
-        </div>
-        <p className="text-xs text-slate-600 mt-3">
-          Configure <code>RAZORPAY_KEY_ID</code>, <code>RAZORPAY_KEY_SECRET</code>, and <code>RAZORPAY_WEBHOOK_SECRET</code>
-          in your server deployment environment. Do not enter API credentials in this browser or expose the secret key to restaurant users.
-        </p>
       </div>
 
       {/* Invoices & Receipts History */}
@@ -191,6 +149,13 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
+              {invoices.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-6 px-3 text-center text-slate-400">
+                    No payments yet. Your receipts will appear here after your first payment.
+                  </td>
+                </tr>
+              )}
               {invoices.map((inv) => (
                 <tr key={inv.id} className="hover:bg-slate-50">
                   <td className="py-3 px-3 font-mono font-bold text-slate-900">{inv.receiptNumber}</td>
@@ -201,8 +166,16 @@ export const BillingSettingsView: React.FC<BillingSettingsViewProps> = ({
                     ₹{inv.amount.toLocaleString('en-IN')}
                   </td>
                   <td className="py-3 px-3">
-                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                      CAPTURED
+                    <span
+                      className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${
+                        inv.status === 'captured'
+                          ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                          : inv.status === 'refunded'
+                          ? 'text-amber-700 bg-amber-50 border-amber-200'
+                          : 'text-rose-700 bg-rose-50 border-rose-200'
+                      }`}
+                    >
+                      {inv.status}
                     </span>
                   </td>
                   <td className="py-3 px-3 text-slate-500 text-[11px]">{inv.method}</td>
