@@ -48,6 +48,36 @@ export class BillingApiError extends Error {
   }
 }
 
+// Last subscription the server confirmed. Used ONLY when the server cannot be reached (offline POS), and the
+// expiry date inside it is still enforced. Cleared on sign-out.
+const CACHE_KEY = 'fooddesk_subscription_cache_v1';
+
+function readCache(): SubscriptionState | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    const raw = window.localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as SubscriptionState;
+    return parsed && typeof parsed.expiryDate === 'string' && parsed.tier ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function writeCache(sub: SubscriptionState): void {
+  try {
+    if (typeof window !== 'undefined') window.localStorage.setItem(CACHE_KEY, JSON.stringify(sub));
+  } catch {
+    /* storage full or blocked: fine, the cache is only a fallback */
+  }
+}
+function clearCache(): void {
+  try {
+    if (typeof window !== 'undefined') window.localStorage.removeItem(CACHE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 let current: SubscriptionState | null = null;
 let invoices: PaymentInvoice[] = [];
 let loaded = false;
@@ -143,6 +173,16 @@ export const subscriptionService = {
     return lastError;
   },
 
+  /** Forget everything (call on sign-out so the next person on this browser starts clean). */
+  reset(): void {
+    current = null;
+    invoices = [];
+    loaded = false;
+    lastError = null;
+    clearCache();
+    emit();
+  },
+
   getSubscription(): SubscriptionState {
     return current ?? PLACEHOLDER_STATE;
   },
@@ -163,10 +203,21 @@ export const subscriptionService = {
         invoices = data.invoices ?? [];
         loaded = true;
         lastError = null;
+        writeCache(data.subscription);
         emit();
         return true;
       } catch (err) {
         lastError = err instanceof Error ? err.message : 'Could not load subscription';
+        // Server unreachable (offline, or a 5xx): keep a paid restaurant running on the last confirmed state.
+        // 401/403/404 mean "not allowed / not linked", so no fallback for those.
+        const unreachable = !(err instanceof BillingApiError) || err.status >= 500;
+        if (unreachable && !loaded) {
+          const cached = readCache();
+          if (cached) {
+            current = cached;
+            loaded = true;
+          }
+        }
         emit();
         return false;
       } finally {

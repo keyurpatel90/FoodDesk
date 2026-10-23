@@ -234,7 +234,7 @@ export const CashierView: React.FC<CashierViewProps> = ({
 
       {/* WhatsApp Invoice Simulator Modal */}
       {selectedOrderForInvoice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="bg-white rounded-2xl max-w-md w-full overflow-hidden border border-slate-200 shadow-2xl relative">
             {/* WhatsApp Top Header */}
             <div className="bg-[#075e54] text-white p-4 flex items-center justify-between">
@@ -290,7 +290,7 @@ export const CashierView: React.FC<CashierViewProps> = ({
                 <button
                   onClick={handleSendWhatsApp}
                   disabled={whatsAppDeliveryStatus === 'sending'}
-                  className="w-full py-2.5 bg-[#25d366] hover:bg-[#1ebd5a] text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="w-full py-2.5 bg-[#25d366] hover:bg-[#1ebd5a] text-white font-bold text-xs rounded-xl shadow-sm transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Send className="w-3.5 h-3.5" />
                   <span>{whatsAppDeliveryStatus === 'sending' ? 'Sending via WhatsApp API...' : 'Send WhatsApp Invoice'}</span>
@@ -315,7 +315,7 @@ export const CashierView: React.FC<CashierViewProps> = ({
 
       {/* Print Bill Modal */}
       {selectedOrderForPrint && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 border border-slate-200 shadow-2xl relative font-mono text-xs text-slate-800">
             <button
               onClick={() => setSelectedOrderForPrint(null)}

@@ -324,7 +324,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                     ? 'ring-2 ring-violet-600 shadow-lg'
                     : 'ring-1 ring-violet-300 shadow-sm';
                   statusBadge = (
-                    <div className="inline-flex items-center gap-1 text-[10px] font-black text-violet-900 bg-violet-200/90 px-2.5 py-0.5 rounded-full border border-violet-400 shadow-xs">
+                    <div className="inline-flex items-center gap-1 text-[10px] font-black text-violet-900 bg-violet-200/90 px-2.5 py-0.5 rounded-full border border-violet-400 shadow-sm">
                       <Receipt className="w-3 h-3 text-violet-700 animate-bounce" />
                       <span>AWAITING BILL</span>
                     </div>
@@ -432,7 +432,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                         <button
                           type="button"
                           onClick={(e) => handleQuickStatusChange(table.id, 'vacant', e)}
-                          className="w-full py-1 px-2 bg-violet-800 hover:bg-violet-900 text-white rounded-lg text-[10px] font-bold transition-colors flex items-center justify-center gap-1 shadow-xs"
+                          className="w-full py-1 px-2 bg-violet-800 hover:bg-violet-900 text-white rounded-lg text-[10px] font-bold transition-colors flex items-center justify-center gap-1 shadow-sm"
                         >
                           <CheckCircle className="w-3 h-3 text-emerald-300" />
                           <span>Clear Table & Mark Vacant</span>
@@ -626,7 +626,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
               <button
                 onClick={handleSendToKitchen}
                 disabled={cart.length === 0}
-                className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
               >
                 <CheckCircle className="w-4 h-4" />
                 <span>Fire Order to Kitchen (KDS)</span>
@@ -642,7 +642,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
       {/* QR Code Modal for Table Dine-In */}
       {qrModalTable && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 text-center border border-slate-200 shadow-xl relative">
             <button
               onClick={() => setQrModalTable(null)}

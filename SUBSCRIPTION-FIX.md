@@ -1,53 +1,45 @@
-# FoodDesk subscriptions: what was wrong and how to switch it on
+# FoodDesk subscriptions with Razorpay
 
-## Why it "didn't work"
-The code *looked* like a Razorpay integration but was a simulation end to end:
-
-| Problem | Where |
-|---|---|
-| The "Razorpay" popup was a fake form with hard-coded card details. It never loaded Razorpay's `checkout.js` and invented its own payment id and signature. | `RazorpayModal.tsx`, `lib/razorpay.ts` |
-| `/create-order` silently returned a made-up order id when keys were missing or the Razorpay call failed, so Razorpay could never match a payment to it. | `create-order/route.ts` |
-| `/verify-payment` skipped the signature check if the secret or signature was missing, did not confirm the payment with Razorpay, and never wrote to the database (the SQL was commented out). | `verify-payment/route.ts` |
-| The subscription lived in the browser's `localStorage`, and every new browser started with a fake **active Professional plan**. So nothing was ever enforced and nothing was shared between devices. | `lib/subscription.ts` |
-| The "Start free trial" button could be clicked again and again. | `SubscriptionCards.tsx` |
-| The Razorpay Key ID was editable in the browser; the webhook only logged; `/status` returned hard-coded data. | `BillingSettingsView.tsx`, `webhook`, `status` |
-| In the SQL, `activate_organization_subscription` was a `SECURITY DEFINER` function that any logged-in user could call from the browser, i.e. a free Enterprise plan for anyone. It also threw on duplicate payments and ignored renewal dates. | `subscription-billing-upgrade.sql` |
+## What was wrong
+- The downloaded subscription code was a **demo**: a fake Razorpay popup, fake order ids, no signature check, and the plan stored in the browser's `localStorage`. Nothing was ever charged or saved.
+- It was **never connected to your real `app/page.tsx`**. The "Access Paused · Role: Waiter" screen came from the demo's own role switcher, which doesn't exist in your app (your roles come from `profiles.role`).
+- The demo components were styled with Tailwind, but your app uses its own CSS, so they rendered unstyled.
+- The old SQL let any logged-in user call `activate_organization_subscription` from the browser (a free Enterprise plan for anyone).
 
 ## How it works now
-1. Owner clicks a plan -> `POST /api/subscription/create-order`. The server decides the price, creates a **real Razorpay order** and tags it with the restaurant + plan.
-2. The modal shows the amount, then opens the **real Razorpay Checkout** (UPI / cards / netbanking / wallets).
-3. On success -> `POST /api/subscription/verify-payment`. The server checks the signature, re-fetches the order and payment from Razorpay (captured? same order? same amount?), then calls the database function that activates the plan.
-4. If the owner closes the tab right after paying, the **webhook** does the same activation. It is idempotent, so both paths can run safely.
-5. The app reads the subscription from `GET /api/subscription/status` (database), not from `localStorage`.
+- **Every restaurant (organization) needs an active plan.** After login, `page.tsx` asks the server (`/api/subscription/status`, read from the database).
+  - **Active or trial:** the app runs as before. **Owners** also see a slim strip ("Professional plan · active until 20 Nov") with *Manage plan* -> plan cards (Renew / Upgrade) and payment history.
+  - **Expired:** staff see "Access Paused" and are told to contact the owner. The **owner** sees the plan cards and can pay immediately.
+  - **Platform super-admins** (`profiles.is_super_admin`) are exempt.
+- **Paying:** owner picks a plan -> server prices it and creates a real Razorpay order -> real Razorpay Checkout (UPI / cards / netbanking / wallets) -> server verifies the signature and re-checks the payment with Razorpay -> plan activated in Postgres. If the owner closes the tab right after paying, the **webhook** activates it. Both paths are idempotent.
+- **Plan rules** (`lib/server/pricing.ts`): new / expired / trial = full price, starts today, 30 days. Renew the same plan while active = 30 days *added* after the current end date. Upgrade while active = price minus credit for unused days. Downgrade while active = blocked until the plan ends.
+- **Offline-safe:** if the internet drops, a restaurant whose last confirmed plan is still valid keeps working (the expiry date is still enforced). Locked-out/401/403 results are never bypassed by this cache.
+- **New restaurants get a 14-day Professional trial** from the database default.
 
-Plan rules (in `lib/server/pricing.ts`, one place to change):
-- **New / expired / trial** -> full price, starts today, 30 days.
-- **Renew same plan while active** -> full price, 30 days are *added* after the current end date.
-- **Upgrade while active** -> price minus credit for unused days (max 30), term restarts today.
-- **Downgrade while active** -> blocked until the current period ends (button shows "Switch after 20 Nov").
+## Setup: do these IN THIS ORDER
+1. **Run the SQL** `supabase/subscription-billing-upgrade.sql` in the Supabase SQL editor (safe to run twice).
+   *Every existing restaurant gets a fresh 14-day trial at that moment; after it ends they must pay.*
+2. **Add env vars in Vercel** (Settings -> Environment Variables), from `.env.example`: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, `SUPABASE_SERVICE_ROLE_KEY` (+ your existing `NEXT_PUBLIC_SUPABASE_*`). Start with Razorpay **test** keys.
+3. **Razorpay webhook:** Dashboard -> Settings -> Webhooks -> URL `https://YOUR-DOMAIN/api/subscription/webhook`, secret = `RAZORPAY_WEBHOOK_SECRET`, events `order.paid`, `payment.captured`, `payment.failed`.
+4. **Copy the files** from this zip into your repo (same paths): `app/api/subscription/**`, `lib/subscription*.ts`, `lib/razorpay.ts`, `lib/billing-auth.ts`, `lib/server/**`, `hooks/useSubscription.ts`, `styles/fd-billing.css`, `components/{SubscriptionLockout,SubscriptionCards,SubscriptionBanner,BillingDrawer,BillingSettingsView,RazorpayModal,PricingModal}.tsx`, and **`app/page.tsx`**.
+   Only 2 of your original `page.tsx` lines changed (the sign-out handlers); everything else there is added.
+5. **Redeploy** (the `NEXT_PUBLIC_` variables are baked in at build time).
+   *Deploying before steps 1-2 would show everyone "couldn't check your subscription". To ship the code first, set `NEXT_PUBLIC_BILLING_ENFORCED=false`, finish setup, then remove it.*
+6. Make sure the owner's `profiles.role` is `owner` (or `admin`). Change who may pay with `BILLING_ADMIN_ROLES`.
 
-## Setup (about 15 minutes)
-1. **Database.** Paste `supabase/subscription-billing-upgrade.sql` into the Supabase SQL editor and run it. It is safe to run twice.
-   *Existing restaurants get a fresh 14-day Professional trial when you run it. After that they must pay.*
-2. **Env vars.** Copy `.env.example` into `.env.local` (and into Vercel -> Settings -> Environment Variables). Use Razorpay **test** keys first.
-3. **Razorpay webhook.** Dashboard -> Settings -> Webhooks -> Add: URL `https://YOUR-DOMAIN/api/subscription/webhook`, secret = `RAZORPAY_WEBHOOK_SECRET`, events `order.paid`, `payment.captured`, `payment.failed`.
-4. **Wire up your page.** See `examples/page-integration.example.tsx` (your `page.tsx` was not in the zip). In short: replace the `localStorage` subscription state with `useSubscription()`, show a loading state until it resolves, and register your Supabase token with `setAccessTokenProvider(...)`.
-5. **Tell the server who the user is.** `lib/server/auth.ts -> resolveMembership()` looks for the restaurant in `app_metadata.organization_id`, then in `profiles(id, organization_id, role)`. **If your multi-tenant schema stores this elsewhere, change that one query.**
-6. `npm i @supabase/supabase-js` if it is not already installed.
+You can delete these demo-only files; your real app never uses them: `components/{OrdersView,CashierView,KDSView,LoyaltyView,AnalyticsView,MultiOutletView,CustomerQRView,Navbar,DemoControlBar}.tsx`.
 
-## Testing with Razorpay test mode
-- UPI: `success@razorpay` (or `failure@razorpay` to see a failed payment). Card: `4111 1111 1111 1111`, any future expiry, any CVV.
-- No login wired up yet? Set `BILLING_DEV_ORG_ID=<an organizations.id>` in `.env.local` to try the full flow locally. It is ignored in production builds.
-- The webhook needs a public URL. Locally use a tunnel (e.g. `ngrok http 3000`) and put that URL in the Razorpay dashboard.
+## Test in Razorpay test mode
+Log in as the owner, open *Manage plan* (or the expired screen), pick a plan. UPI `success@razorpay` (or `failure@razorpay`), or card `4111 1111 1111 1111` with any future expiry and any CVV. To force the expired screen: `update organizations set subscription_status='inactive', subscription_end_date=now()-interval '1 day' where id='...';`
 
-## Removed from the old code
-`subscriptionService.activateTier / startFreeTrial / saveSubscription / addInvoice / reactivateDefault`, `razorpayService.getKeyId / setKeyId / generateMock*`, the Razorpay-key form, and the "Download ZIP" links. If any file outside this zip calls them, switch it to `refresh()` / `createOrder()` / `verifyPayment()`.
+## Assumptions to check
+- `profiles` has `id, organization_id, role, active, is_super_admin` (all used by your `page.tsx`) and `organizations.id` is a uuid. If membership lives elsewhere, edit the single query in `lib/server/auth.ts -> resolveMembership()`.
+- **Not enforced yet:** plan *limits and features* (tables, staff accounts, WhatsApp invoices, multi-branch). The app currently enforces **active vs expired** only. Mapping tiers to your `settings.features` flags is a next step.
+- Renewal is a one-time monthly payment done by hand, not auto-debit (that needs Razorpay *Subscriptions*, a different integration).
+- Before going live: switch to live keys and a live webhook, and complete Razorpay KYC.
 
-## Before going live
-- Switch to live keys (`rzp_live_...`) and a live-mode webhook; complete Razorpay KYC.
-- Remove `DemoControlBar` (or leave `NEXT_PUBLIC_DEMO_MODE` off).
-- Hiding features in the UI is not security. Enforce limits in the database too (see the commented RLS example at the bottom of the SQL: `is_org_subscription_active()` / `has_org_feature()`).
-- Pricing is monthly, one-time payments that the owner renews by hand. If you later want auto-debit, that needs Razorpay *Subscriptions* (plans + mandates), which is a different integration.
+## Styling
+`styles/fd-billing.css` is a compiled, **scoped** stylesheet (everything lives under `.fd-billing`), so it can't change the rest of your UI. If you edit the billing components' classes, regenerate it: `npx tailwindcss@3 -c tailwind.fd-billing.config.js -i styles/fd-billing.src.css -o styles/fd-billing.css --minify`.
 
-## How this was verified
-Strict TypeScript, a production `next build`, 11 pricing unit tests, 8 browser-flow tests (the modal against a fake `window.Razorpay`), 15 end-to-end tests (route handlers -> Supabase client -> PostgREST -> Postgres running this migration, against a mock Razorpay that signs payments like the real one), and 10 direct SQL checks including the security ones. **Not tested:** a live payment with *your* Razorpay account and your real login/profile schema. That is why steps 2-5 above matter.
+## What was verified
+Strict TypeScript and a production `next build` of your real `page.tsx`; 12 tests of your page's gating (cashier vs owner, expired vs active, trial, offline, errors, super-admin, sign-out, kill switch); 15 end-to-end payment tests and 6 real-login/role tests (routes -> Supabase client -> PostgREST -> Postgres, against a mock Razorpay that signs payments like the real one); 8 checkout-UI tests; 11 pricing tests; direct SQL checks including security. **Not tested:** a live payment on your Razorpay account, your real Supabase project, and how the screens look inside your actual CSS. Please send a screenshot if anything looks off.

@@ -60,7 +60,7 @@ export const DemoControlBar: React.FC<DemoControlBarProps> = ({
                 onClick={() => onRoleChange(r.id)}
                 className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap ${
                   currentRole === r.id
-                    ? 'bg-indigo-600 text-white shadow-xs'
+                    ? 'bg-indigo-600 text-white shadow-sm'
                     : 'text-slate-300 hover:text-white hover:bg-slate-700/60'
                 }`}
               >
@@ -132,7 +132,7 @@ export const DemoControlBar: React.FC<DemoControlBarProps> = ({
           {/* Quick Pay / Upgrade Button */}
           <button
             onClick={onOpenUpgradeModal}
-            className="px-2.5 py-1 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-semibold rounded-md shadow-xs transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+            className="px-2.5 py-1 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-semibold rounded-md shadow-sm transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
           >
             <CreditCard className="w-3.5 h-3.5" />
             <span className="hidden md:inline">Razorpay Checkout</span>

@@ -21,14 +21,19 @@ const read = (): Snapshot => ({
 /**
  * Loads the restaurant's subscription from the server and keeps it fresh
  * (on mount, when the tab regains focus, and every 5 minutes).
+ * Pass `enabled = false` until the user is signed in so it does not call the API too early.
  * Use `loading` to show a spinner instead of flashing the "expired" lockout screen.
  */
-export function useSubscription() {
+export function useSubscription(enabled = true) {
   const [snap, setSnap] = useState<Snapshot>(read);
 
   useEffect(() => {
     const sync = () => setSnap(read());
     window.addEventListener(SUBSCRIPTION_CHANGED_EVENT, sync);
+    sync();
+    if (!enabled) {
+      return () => window.removeEventListener(SUBSCRIPTION_CHANGED_EVENT, sync);
+    }
 
     const refresh = () => {
       void subscriptionService.refresh();
@@ -45,7 +50,7 @@ export function useSubscription() {
       document.removeEventListener('visibilitychange', onVisible);
       window.clearInterval(timer);
     };
-  }, []);
+  }, [enabled]);
 
   const refresh = useCallback(() => subscriptionService.refresh(), []);
   return { ...snap, refresh };

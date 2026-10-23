@@ -1,0 +1,12 @@
+/* FoodDesk billing screens. Scoped under .fd-billing; generated with Tailwind 3 (see SUBSCRIPTION-FIX.md to regenerate). */
+.fd-billing { line-height: 1.5; -webkit-text-size-adjust: 100%; text-align: left; }
+.fd-billing *, .fd-billing ::before, .fd-billing ::after { box-sizing: border-box; border-width: 0; border-style: solid; border-color: #e2e8f0; }
+.fd-billing h1, .fd-billing h2, .fd-billing h3, .fd-billing h4, .fd-billing p, .fd-billing figure { margin: 0; font-size: inherit; font-weight: inherit; }
+.fd-billing button { font: inherit; color: inherit; background: transparent; border-radius: 0; padding: 0; margin: 0; text-transform: none; line-height: inherit; -webkit-appearance: button; cursor: pointer; }
+.fd-billing button:disabled { cursor: not-allowed; }
+.fd-billing a { color: inherit; text-decoration: inherit; }
+.fd-billing table { border-collapse: collapse; text-indent: 0; border-color: inherit; }
+.fd-billing svg, .fd-billing img { display: block; vertical-align: middle; max-width: 100%; }
+.fd-billing input { font: inherit; color: inherit; margin: 0; }
+.fd-billing .tabular-nums { font-variant-numeric: tabular-nums; }
+@tailwind utilities;

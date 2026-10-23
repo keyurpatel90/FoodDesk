@@ -247,9 +247,11 @@ GRANT EXECUTE ON FUNCTION activate_organization_subscription(UUID, subscription_
 -- 8. Stop restaurants editing their own subscription columns ---------------------------------
 -- If your RLS lets a restaurant admin UPDATE their organizations row, they could otherwise set
 -- subscription_status = 'active' themselves. Updates made through the service role or the function
--- above (which run as the table owner) are still allowed.
+-- above (which run as the table owner) are still allowed, as are platform super-admins.
 CREATE OR REPLACE FUNCTION protect_org_subscription_columns()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    v_super BOOLEAN := FALSE;
 BEGIN
     IF current_user IN ('anon', 'authenticated') AND (
            NEW.subscription_tier       IS DISTINCT FROM OLD.subscription_tier
@@ -264,7 +266,15 @@ BEGIN
         OR NEW.razorpay_subscription_id IS DISTINCT FROM OLD.razorpay_subscription_id
         OR NEW.auto_renew              IS DISTINCT FROM OLD.auto_renew
     ) THEN
-        RAISE EXCEPTION 'Subscription fields can only be changed by the billing system' USING ERRCODE = '42501';
+        -- Platform super-admins (profiles.is_super_admin) may adjust plans by hand, e.g. from an admin screen.
+        BEGIN
+            SELECT COALESCE(p.is_super_admin, FALSE) INTO v_super FROM profiles p WHERE p.id = auth.uid();
+        EXCEPTION WHEN OTHERS THEN
+            v_super := FALSE;
+        END;
+        IF NOT COALESCE(v_super, FALSE) THEN
+            RAISE EXCEPTION 'Subscription fields can only be changed by the billing system' USING ERRCODE = '42501';
+        END IF;
     END IF;
     RETURN NEW;
 END;

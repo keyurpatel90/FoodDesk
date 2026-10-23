@@ -22,7 +22,7 @@ const ADMIN_ROLES = (process.env.BILLING_ADMIN_ROLES || 'admin,owner,org_admin,s
  *
  * Default lookup order:
  *   1. auth.users.app_metadata.organization_id (+ app_metadata.role)  -- set only by the server, safe to trust
- *   2. public.profiles (id = auth user id) with columns: organization_id, role
+ *   2. public.profiles (id = auth user id) with columns: organization_id, role, active
  *
  * NEVER use user_metadata here: signed-in users can edit it themselves.
  * If your app keeps membership elsewhere (e.g. organization_members / staff), change the query below.
@@ -38,7 +38,7 @@ async function resolveMembership(
 
   const { data, error } = await getSupabaseAdmin()
     .from('profiles')
-    .select('organization_id, role')
+    .select('organization_id, role, active')
     .eq('id', userId)
     .maybeSingle();
 
@@ -46,6 +46,7 @@ async function resolveMembership(
     console.error('[auth] could not read profiles for membership lookup:', error.message);
     return { organizationId: null, role: null };
   }
+  if (data && data.active === false) return { organizationId: null, role: null }; // deactivated user
   return { organizationId: data?.organization_id ?? null, role: (data?.role as string | undefined) ?? null };
 }
 

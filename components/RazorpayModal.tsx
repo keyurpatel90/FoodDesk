@@ -139,7 +139,7 @@ export const RazorpayModal: React.FC<RazorpayModalProps> = ({ tier, isOpen, onCl
   const displayAmount = order ? rupees(order.amountPaise) : rupees(tier.priceMonthly * 100);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
       <div className="relative w-full max-w-lg overflow-hidden bg-white rounded-2xl shadow-2xl border border-slate-200">
         {/* Header */}
         <div className="bg-[#0c2340] text-white p-5">

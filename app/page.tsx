@@ -15,6 +15,17 @@ import { supabase } from '@/lib/supabase';
 import { cacheSnapshot, getCachedProfile, getCachedSettings, installSyncListeners, syncNow } from '@/lib/offline';
 import type { AppSettings, FeatureFlags, Profile, Role } from '@/lib/types';
 import { DEFAULT_FEATURES, canonicalRole, ROLE_LABELS } from '@/lib/types';
+// --- Subscription billing -------------------------------------------------------------------
+import '@/styles/fd-billing.css';
+import { subscriptionService } from '@/lib/subscription';
+import { setAccessTokenProvider } from '@/lib/billing-auth';
+import { useSubscription } from '@/hooks/useSubscription';
+import { SubscriptionLockout } from '@/components/SubscriptionLockout';
+import { SubscriptionBanner } from '@/components/SubscriptionBanner';
+import { BillingDrawer } from '@/components/BillingDrawer';
+
+// The billing API identifies the restaurant from the signed-in user's token.
+setAccessTokenProvider(async () => (await supabase.auth.getSession()).data.session?.access_token ?? null);
 
 export type Mode = 'cashier' | 'kitchen' | 'dashboard' | 'orders' | 'admin' | 'runner' | 'organizations';
 
@@ -98,6 +109,7 @@ export default function Home() {
   const [settings, setSettings] = useState<AppSettings>(initialSettings);
   const [mode, setMode] = useState<Mode>('cashier');
   const [error, setError] = useState('');
+  const [billingOpen, setBillingOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -125,7 +137,7 @@ export default function Home() {
     }
     void bootstrap();
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!session) { setProfile(null); setSessionReady(true); return; }
+      if (!session) { setProfile(null); subscriptionService.reset(); setBillingOpen(false); setSessionReady(true); return; }
       const context = await loadUserContext(session);
       if (context) { setProfile(context.profile); setSettings(context.settings); void syncNow(); }
       setSessionReady(true);
@@ -153,6 +165,12 @@ export default function Home() {
   const modes = useMemo(() => profile ? allowedModes(profile, settings) : [], [profile, settings]);
   useEffect(() => { if (profile && !modes.includes(mode)) setMode(modes[0] ?? 'cashier'); }, [profile, modes, mode]);
 
+  // Every restaurant (organization) needs an active subscription. Platform super-admins are exempt.
+  // Set NEXT_PUBLIC_BILLING_ENFORCED=false to deploy the code without enforcing subscriptions yet.
+  const billingEnforced = process.env.NEXT_PUBLIC_BILLING_ENFORCED !== 'false';
+  const needsSubscription = billingEnforced && !!profile && !profile.is_super_admin && !!profile.organization_id;
+  const { subscription, loading: subLoading, error: subError, refresh: refreshSubscription } = useSubscription(needsSubscription);
+
   async function reloadContext() {
     const { data: { session } } = await supabase.auth.getSession();
     const context = await loadUserContext(session);
@@ -170,6 +188,35 @@ export default function Home() {
     return <Onboarding settings={settings} profile={profile} onComplete={reloadContext} />;
   }
 
+  const isOwner = canonicalRole(profile.role) === 'owner';
+  const signOut = () => { subscriptionService.reset(); void supabase.auth.signOut(); };
+
+  if (needsSubscription) {
+    if (subLoading) {
+      return <main className="authPage"><div className="loadingCard">
+        {subError
+          ? <>
+              <p>We couldn’t check your subscription. Check your internet connection and try again.</p>
+              <p className="muted">{subError}</p>
+              <button className="secondary bigbtn" onClick={() => void refreshSubscription()}>Try again</button>
+              <button className="secondary bigbtn" onClick={signOut}>Sign out</button>
+            </>
+          : 'Checking subscription…'}
+      </div></main>;
+    }
+    if (!subscriptionService.isSubscriptionActive()) {
+      return <main>
+        <SubscriptionLockout
+          currentRole={isOwner ? 'admin' : 'cashier'}
+          roleLabel={ROLE_LABELS[profile.role]}
+          subscription={subscription}
+          onSubscriptionUpdated={() => void refreshSubscription()}
+          onSignOut={signOut}
+        />
+      </main>;
+    }
+  }
+
   const roleLabel = ROLE_LABELS[profile.role];
   const go = (target: Mode) => (modes.includes(target) ? () => setMode(target) : undefined);
   const content = mode === 'organizations' && profile.is_super_admin ? <OrganizationAdmin />
@@ -180,8 +227,12 @@ export default function Home() {
     : mode === 'runner' ? <Runner settings={settings} />
     : <Kitchen settings={settings} />;
 
-  return <Shell brand={settings.business_name} roleLabel={roleLabel} userName={profile.display_name} modes={modes} mode={mode} onMode={next => setMode(next as Mode)} onSignOut={() => { void supabase.auth.signOut(); }}>
+  return <Shell brand={settings.business_name} roleLabel={roleLabel} userName={profile.display_name} modes={modes} mode={mode} onMode={next => setMode(next as Mode)} onSignOut={signOut}>
+    {needsSubscription && isOwner && <SubscriptionBanner subscription={subscription} onManage={() => setBillingOpen(true)} />}
     {error && <div className="container"><div className="offlineNotice">{error}</div></div>}
     {content}
+    {needsSubscription && isOwner && (
+      <BillingDrawer isOpen={billingOpen} onClose={() => setBillingOpen(false)} subscription={subscription} onSubscriptionUpdated={() => void refreshSubscription()} />
+    )}
   </Shell>;
 }

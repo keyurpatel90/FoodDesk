@@ -37,7 +37,7 @@ export const SubscriptionCards: React.FC<SubscriptionCardsProps> = ({
       {/* 3 Pricing Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch max-w-6xl mx-auto pt-4">
         {/* Card 1: Starter */}
-        <div className="relative flex flex-col justify-between p-8 bg-white border border-slate-200 rounded-2xl shadow-xs hover:shadow-md transition-shadow">
+        <div className="relative flex flex-col justify-between p-8 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md transition-shadow">
           {currentSubscription.tier === 'starter' && currentSubscription.status === 'active' && (
             <div className="absolute top-4 right-4 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
               Current Plan
@@ -139,7 +139,7 @@ export const SubscriptionCards: React.FC<SubscriptionCardsProps> = ({
         </div>
 
         {/* Card 3: Enterprise */}
-        <div className="relative flex flex-col justify-between p-8 bg-white border border-slate-200 rounded-2xl shadow-xs hover:shadow-md transition-shadow">
+        <div className="relative flex flex-col justify-between p-8 bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md transition-shadow">
           {currentSubscription.tier === 'enterprise' && currentSubscription.status === 'active' && (
             <div className="absolute top-4 right-4 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
               Current Plan

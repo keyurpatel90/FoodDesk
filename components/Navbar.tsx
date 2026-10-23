@@ -59,7 +59,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center justify-between gap-8 h-16">
         {/* Zone 1: Wordmark / Brand */}
         <div className="flex items-center gap-3 shrink-0">
-          <div className="w-9 h-9 rounded-xl bg-[#6c5ce7] text-white flex items-center justify-center shadow-xs">
+          <div className="w-9 h-9 rounded-xl bg-[#6c5ce7] text-white flex items-center justify-center shadow-sm">
             <UtensilsCrossed className="w-5 h-5" />
           </div>
           <div>
@@ -122,7 +122,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 e.stopPropagation();
                 onOpenPricing();
               }}
-              className={`p-1.5 rounded-md text-xs font-bold transition-all shadow-xs flex items-center gap-1 ${
+              className={`p-1.5 rounded-md text-xs font-bold transition-all shadow-sm flex items-center gap-1 ${
                 isEnterprise
                   ? 'bg-slate-900 text-white hover:bg-slate-800'
                   : isPro
@@ -145,7 +145,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             onClick={() => onTabChange(item.id)}
             className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap shrink-0 flex items-center gap-1 ${
               activeTab === item.id
-                ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
+                ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
