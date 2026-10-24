@@ -1,0 +1,23 @@
+/* Material-style dropdown (outlined field + elevated menu). Self-contained: nothing here touches other styles.
+   Override the accent colour with --msel-accent on any parent element. */
+.msel{position:relative;display:inline-block;min-width:160px;max-width:100%;vertical-align:middle}
+.msel__btn{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;height:38px;margin:0;padding:0 10px 0 12px;background:#fff;color:#101828;border:1px solid #d0d5dd;border-radius:8px;font:inherit;font-size:14px;font-weight:600;line-height:1.2;text-align:left;cursor:pointer;transition:border-color .15s,box-shadow .15s,background .15s}
+.msel__btn:hover:not(:disabled){border-color:#98a2b3}
+.msel__btn:focus-visible,.msel--open .msel__btn{outline:none;border-color:var(--msel-accent,#0f172a);box-shadow:0 0 0 1px var(--msel-accent,#0f172a)}
+.msel__btn:disabled{background:#f2f4f7;color:#98a2b3;cursor:not-allowed}
+.msel__value{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msel__chev{flex:none;color:#667085;transition:transform .18s}
+.msel--open .msel__chev{transform:rotate(180deg)}
+.msel--md .msel__btn{height:48px;font-size:15px}
+.msel--labeled .msel__btn{height:54px;padding-top:18px}
+.msel__label{position:absolute;left:13px;top:7px;font-size:11px;font-weight:700;letter-spacing:.02em;color:#667085;pointer-events:none}
+.msel--open.msel--labeled .msel__label,.msel--labeled .msel__btn:focus-visible .msel__label{color:var(--msel-accent,#0f172a)}
+.msel__menu{position:fixed;z-index:2000;margin:0;padding:6px 0;list-style:none;overflow-y:auto;background:#fff;border:1px solid #eaecf0;border-radius:10px;box-shadow:0 12px 32px rgba(16,24,40,.18),0 2px 6px rgba(16,24,40,.08);transform-origin:top;animation:mselIn .12s ease-out}
+.msel__menu[data-above="true"]{transform-origin:bottom}
+.msel__opt{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:42px;padding:0 14px;font-size:14px;color:#101828;cursor:pointer;user-select:none}
+.msel__opt--active{background:#f2f4f7}
+.msel__opt[aria-selected="true"]{font-weight:700;background:#f1f5f9}
+.msel__opt[aria-selected="true"].msel__opt--active{background:#e5eaf1}
+.msel__opt[aria-disabled="true"]{opacity:.45;cursor:not-allowed}
+@keyframes mselIn{from{opacity:0;transform:scaleY(.94)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.msel__menu{animation:none}.msel__btn,.msel__chev{transition:none}}

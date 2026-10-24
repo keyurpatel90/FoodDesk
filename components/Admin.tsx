@@ -10,6 +10,7 @@ import type { AppSettings, Discount, FeatureFlags, Product, Profile, ProductUnit
 import { lineAmount, money, unitLabel } from '@/lib/format';
 import MultiOutlet from '@/components/MultiOutlet';
 import Modal, { Field } from '@/components/Modal';
+import MaterialSelect from '@/components/MaterialSelect';
 
 const roles: Role[] = ['owner', 'manager', 'cashier', 'kitchen', 'runner', 'viewer'];
 const featureLabels: Record<keyof FeatureFlags, string> = { cashier: 'Cashier', kitchen: 'Kitchen', dashboard: 'Dashboard', orders: 'Order management', menuManagement: 'Menu management', discounts: 'Discounts', staffManagement: 'Staff management', reports: 'Reports', printing: 'Printing', customDiscount: 'Custom discounts', cashChange: 'Cash and change', upiPayment: 'UPI payments', posPayment: 'Card payments' };
@@ -79,7 +80,9 @@ export default function Admin({ settings, profile, onSettingsChange }: { setting
     if (data) { const rows = data as Product[]; setProducts(rows); await cacheSnapshot({ products: rows.filter(p => p.active) }); }
   }
   async function loadDiscounts() {
-    const { data } = await supabase.from('discounts').select('*').order('created_at');
+    const t = await tenant();
+    if (!t?.organization_id) return;
+    const { data } = await supabase.from('discounts').select('*').eq('organization_id', t.organization_id).order('created_at');
     if (data) { const rows = data as Discount[]; setDiscounts(rows); await cacheSnapshot({ discounts: rows.filter(d => d.active) }); }
   }
   async function loadUsers() { try { const body = await adminApi('GET'); setUsers(body.users ?? []); } catch { /* shown on the Staff tab as empty */ } }
@@ -126,7 +129,9 @@ export default function Admin({ settings, profile, onSettingsChange }: { setting
     if (!dForm.value || Number(dForm.value) <= 0) { setFormError('Enter a discount value above zero.'); return; }
     if (dForm.type === 'percent' && Number(dForm.value) > 100) { setFormError('A percentage discount cannot be more than 100.'); return; }
     setBusy(true); setFormError('');
-    const payload = { name: dForm.name.trim(), type: dForm.type, value: Number(dForm.value), min_order_amount: Number(dForm.min) || 0, max_discount_amount: dForm.max ? Number(dForm.max) : null };
+    const t = await tenant();
+    if (!t?.organization_id) { setBusy(false); setFormError('Your account is not assigned to a restaurant. Ask an administrator to assign access.'); return; }
+    const payload = { name: dForm.name.trim(), type: dForm.type, value: Number(dForm.value), min_order_amount: Number(dForm.min) || 0, max_discount_amount: dForm.max ? Number(dForm.max) : null, organization_id: t.organization_id };
     const { error } = discountModal.id
       ? await supabase.from('discounts').update(payload).eq('id', discountModal.id)
       : await supabase.from('discounts').insert({ ...payload, active: true });
@@ -218,7 +223,7 @@ export default function Admin({ settings, profile, onSettingsChange }: { setting
       {users.length ? <table className="tbl"><thead><tr><th>Name</th><th>Role</th><th>Status</th></tr></thead><tbody>
         {users.map(u => <tr key={u.id}>
           <td><b>{u.display_name}</b><small className="when">{u.email}</small></td>
-          <td><select aria-label={`Role for ${u.display_name}`} value={canonicalRole(u.role)} onChange={e => void updateUser(u, { role: e.target.value })}>{roles.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}</select></td>
+          <td><MaterialSelect ariaLabel={`Role for ${u.display_name}`} value={canonicalRole(u.role)} options={roles.map(r => ({ value: r, label: ROLE_LABELS[r] }))} onChange={r => void updateUser(u, { role: r })} /></td>
           <td><button type="button" className="secondary small" onClick={() => void updateUser(u, { active: !u.active })}>{u.active ? 'Active' : 'Disabled'}</button></td>
         </tr>)}
       </tbody></table> : <div className="emptyMini"><p>No staff yet</p></div>}
