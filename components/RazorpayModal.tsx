@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckoutOrder, TierConfig } from '@/lib/subscription-types';
+import type { RazorpayPaymentSuccessResponse } from '@/lib/razorpay';
 import { razorpayService } from '@/lib/razorpay';
 import { BillingApiError, subscriptionService } from '@/lib/subscription';
 import { ShieldCheck, CheckCircle2, X, Loader2, ArrowRight, AlertCircle, Info } from 'lucide-react';
@@ -37,10 +38,12 @@ export const RazorpayModal: React.FC<RazorpayModalProps> = ({ tier, isOpen, onCl
   const [error, setError] = useState<string | null>(null);
   const [retryStep, setRetryStep] = useState<'preparing' | 'review'>('preparing');
   const [result, setResult] = useState<{ paymentId: string; orderId: string } | null>(null);
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
 
   const startedRef = useRef(false);
   const paidRef = useRef(false);
   const lastFailureRef = useRef<string | null>(null);
+  const paidResponseRef = useRef<RazorpayPaymentSuccessResponse | null>(null);
 
   const prepare = useCallback(async () => {
     setStep('preparing');
@@ -63,6 +66,50 @@ export const RazorpayModal: React.FC<RazorpayModalProps> = ({ tier, isOpen, onCl
   }, [isOpen, prepare]);
 
   if (!isOpen) return null;
+
+  /**
+   * The customer has PAID at this point, so never lose that: retry transient failures, then fall back to
+   * watching for the webhook, and finally let the owner press "Confirm again" (the payment is never charged twice).
+   */
+  const confirmPayment = async (response: RazorpayPaymentSuccessResponse) => {
+    setError(null);
+    setErrorDetail(null);
+    setStep('verifying');
+    const done = () => {
+      setResult({ paymentId: response.razorpay_payment_id, orderId: response.razorpay_order_id });
+      setStep('success');
+    };
+
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await subscriptionService.verifyPayment(response);
+        done();
+        return;
+      } catch (err) {
+        lastErr = err;
+        const transient = !(err instanceof BillingApiError) || err.status >= 500 || err.code === 'PAYMENT_NOT_CAPTURED';
+        if (!transient) break;
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+
+    // Maybe the webhook activated it in the meantime.
+    if (await subscriptionService.waitForActivation(response.razorpay_order_id)) {
+      done();
+      return;
+    }
+
+    const api = lastErr instanceof BillingApiError ? lastErr : null;
+    setResult({ paymentId: response.razorpay_payment_id, orderId: response.razorpay_order_id });
+    setError(
+      `Your payment was received (ID: ${response.razorpay_payment_id}) but we could not activate the plan yet. ` +
+        'You have NOT been charged twice. Press "Confirm again" in a moment; if it keeps failing, send this payment ID and the technical details below to support.'
+    );
+    setErrorDetail(api ? [api.code, api.detail ?? api.message].filter(Boolean).join(': ') : lastErr instanceof Error ? lastErr.message : null);
+    setRetryStep('review');
+    setStep('error');
+  };
 
   const handlePay = async () => {
     if (!order) return;
@@ -89,28 +136,8 @@ export const RazorpayModal: React.FC<RazorpayModalProps> = ({ tier, isOpen, onCl
         prefill: order.prefill,
         onSuccess: async (response) => {
           paidRef.current = true;
-          setStep('verifying');
-          try {
-            await subscriptionService.verifyPayment(response);
-            setResult({ paymentId: response.razorpay_payment_id, orderId: response.razorpay_order_id });
-            setStep('success');
-          } catch {
-            // Money was taken, but our verify call did not complete (network?). The webhook will activate
-            // the plan; wait for it briefly before telling the owner anything alarming.
-            const activated = await subscriptionService.waitForActivation(response.razorpay_order_id);
-            if (activated) {
-              setResult({ paymentId: response.razorpay_payment_id, orderId: response.razorpay_order_id });
-              setStep('success');
-            } else {
-              setResult({ paymentId: response.razorpay_payment_id, orderId: response.razorpay_order_id });
-              setError(
-                `Your payment was received (ID: ${response.razorpay_payment_id}) but activation is taking longer than usual. ` +
-                  'It will be applied automatically within a few minutes. Refresh this page shortly, and contact support with this payment ID if your plan is still not active.'
-              );
-              setRetryStep('review');
-              setStep('error');
-            }
-          }
+          paidResponseRef.current = response;
+          await confirmPayment(response);
         },
         onFailure: (failure) => {
           // Razorpay keeps its popup open so the owner can retry another method; just remember why.
@@ -305,7 +332,13 @@ export const RazorpayModal: React.FC<RazorpayModalProps> = ({ tier, isOpen, onCl
             <h3 className="text-lg font-bold text-slate-900 mb-2">
               {result ? 'Payment received' : 'We couldn’t start the payment'}
             </h3>
-            <p className="text-sm text-slate-600 mb-6 max-w-sm">{error}</p>
+            <p className="text-sm text-slate-600 mb-4 max-w-sm">{error}</p>
+            {errorDetail && (
+              <div className="w-full mb-6 p-3 rounded-lg bg-slate-50 border border-slate-200 text-left">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Technical details</div>
+                <div className="text-[11px] font-mono text-slate-700 break-words">{errorDetail}</div>
+              </div>
+            )}
             <div className="flex gap-3 w-full">
               <button
                 onClick={onClose}
@@ -319,6 +352,14 @@ export const RazorpayModal: React.FC<RazorpayModalProps> = ({ tier, isOpen, onCl
                   className="flex-1 py-2.5 px-4 bg-[#3395ff] hover:bg-[#2082ec] text-white rounded-xl text-sm font-semibold cursor-pointer"
                 >
                   Try again
+                </button>
+              )}
+              {result && paidResponseRef.current && (
+                <button
+                  onClick={() => void confirmPayment(paidResponseRef.current!)}
+                  className="flex-1 py-2.5 px-4 bg-[#3395ff] hover:bg-[#2082ec] text-white rounded-xl text-sm font-semibold cursor-pointer"
+                >
+                  Confirm again
                 </button>
               )}
             </div>

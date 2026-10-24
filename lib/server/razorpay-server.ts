@@ -141,3 +141,33 @@ export function describePaymentMethod(p: RazorpayPayment): string {
       return 'Razorpay';
   }
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Right after Checkout succeeds, Razorpay may still report the payment as `authorized` for a moment before it is
+ * `captured` (auto-capture), or keep it `authorized` until we capture it (manual-capture accounts).
+ * This waits up to ~5s: it captures when needed, and if our capture call collides with Razorpay's own
+ * auto-capture ("already captured") it simply looks again instead of failing the customer's renewal.
+ */
+export async function waitForCapturedPayment(paymentId: string, amountPaise: number): Promise<RazorpayPayment> {
+  const pollMs = Number(process.env.RAZORPAY_POLL_MS) || 1000;
+  let payment = await fetchRazorpayPayment(paymentId);
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (payment.status === 'captured') return payment;
+    if (payment.status === 'failed' || payment.status === 'refunded') return payment;
+
+    if (payment.status === 'authorized') {
+      try {
+        payment = await captureRazorpayPayment(paymentId, amountPaise);
+        continue;
+      } catch (err) {
+        console.warn('[razorpay] capture call failed (may already be auto-captured); re-checking:', (err as Error).message);
+      }
+    }
+    await sleep(pollMs);
+    payment = await fetchRazorpayPayment(paymentId);
+  }
+  return payment;
+}

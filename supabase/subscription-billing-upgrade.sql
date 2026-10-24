@@ -4,7 +4,8 @@
 --
 -- What this does
 --   * adds subscription columns to `organizations` (creates the table only if it does not exist)
---   * creates `subscriptions` (history) and `payments` (Razorpay receipts)
+--   * creates `billing_subscriptions` (history) and `billing_payments` (Razorpay receipts). The billing_ prefix
+--     keeps them from ever clashing with tables your app already has (e.g. an order `payments` table).
 --   * activate_organization_subscription(): the ONLY way a plan gets activated. Locks the org row,
 --     is idempotent per Razorpay payment id, and can only be called with the service-role key.
 --   * blocks signed-in users from editing subscription columns directly
@@ -25,7 +26,7 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
-    CREATE TYPE payment_status_type AS ENUM ('captured', 'failed', 'refunded', 'pending');
+    CREATE TYPE billing_payment_status AS ENUM ('captured', 'failed', 'refunded', 'pending');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- 2. organizations -------------------------------------------------------------
@@ -68,8 +69,8 @@ ALTER TABLE organizations
         "advanced_analytics": true, "multi_outlet": false, "white_label": false, "multi_station_kds": false
     }'::jsonb;
 
--- 3. subscriptions (history) ---------------------------------------------------
-CREATE TABLE IF NOT EXISTS subscriptions (
+-- 3. billing_subscriptions (history) ---------------------------------------------------
+CREATE TABLE IF NOT EXISTS billing_subscriptions (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id          UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     tier                     subscription_tier_type   NOT NULL,
@@ -84,32 +85,32 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_subscriptions_org ON subscriptions (organization_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_subscriptions_org ON billing_subscriptions (organization_id, created_at DESC);
 
--- 4. payments (Razorpay receipts) ----------------------------------------------
-CREATE TABLE IF NOT EXISTS payments (
+-- 4. billing_payments (Razorpay receipts) ----------------------------------------------
+CREATE TABLE IF NOT EXISTS billing_payments (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id     UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    subscription_id     UUID REFERENCES subscriptions(id) ON DELETE SET NULL,
+    subscription_id     UUID REFERENCES billing_subscriptions(id) ON DELETE SET NULL,
     razorpay_order_id   TEXT NOT NULL,
     razorpay_payment_id TEXT UNIQUE NOT NULL,
     razorpay_signature  TEXT,                                   -- NULL when activated by the webhook
     amount              NUMERIC(10, 2) NOT NULL,                -- what was actually charged
     currency            VARCHAR(10) NOT NULL DEFAULT 'INR',
-    status              payment_status_type NOT NULL DEFAULT 'captured',
+    status              billing_payment_status NOT NULL DEFAULT 'captured',
     payment_method      TEXT DEFAULT 'razorpay',
     receipt_number      TEXT NOT NULL,
     invoice_pdf_url     TEXT,
     meta                JSONB DEFAULT '{}'::jsonb,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_payments_org ON payments (organization_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_payments_org ON billing_payments (organization_id, created_at DESC);
 
-CREATE SEQUENCE IF NOT EXISTS payment_receipt_seq START 1001;
+CREATE SEQUENCE IF NOT EXISTS billing_receipt_seq START 1001;
 
 -- Billing tables are private: only the server (service role, which bypasses RLS) reads or writes them.
-ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE payments      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE billing_subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE billing_payments      ENABLE ROW LEVEL SECURITY;
 
 -- 5. Read-only helpers (safe to use inside RLS policies) -----------------------
 CREATE OR REPLACE FUNCTION is_org_subscription_active(p_org_id UUID)
@@ -164,7 +165,7 @@ RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
     v_org      organizations%ROWTYPE;
-    v_existing payments%ROWTYPE;
+    v_existing billing_payments%ROWTYPE;
     v_plan     RECORD;
     v_stack    BOOLEAN;
     v_start    TIMESTAMPTZ;
@@ -178,7 +179,7 @@ BEGIN
     END IF;
 
     -- Idempotent: the same Razorpay payment never extends the plan twice.
-    SELECT * INTO v_existing FROM payments WHERE razorpay_payment_id = p_razorpay_payment_id;
+    SELECT * INTO v_existing FROM billing_payments WHERE razorpay_payment_id = p_razorpay_payment_id;
     IF FOUND THEN
         IF v_existing.organization_id <> p_org_id THEN
             RAISE EXCEPTION 'payment % belongs to another organization', p_razorpay_payment_id USING ERRCODE = '42501';
@@ -213,21 +214,21 @@ BEGIN
      WHERE id = p_org_id;
 
     IF NOT v_stack THEN
-        UPDATE subscriptions SET status = 'inactive', updated_at = NOW()
+        UPDATE billing_subscriptions SET status = 'inactive', updated_at = NOW()
          WHERE organization_id = p_org_id AND status = 'active';
     END IF;
 
-    INSERT INTO subscriptions (organization_id, tier, status, amount, current_period_start, current_period_end)
+    INSERT INTO billing_subscriptions (organization_id, tier, status, amount, current_period_start, current_period_end)
     VALUES (p_org_id, p_tier, 'active', v_plan.price, v_start, v_end)
     RETURNING id INTO v_sub_id;
 
-    INSERT INTO payments (
+    INSERT INTO billing_payments (
         organization_id, subscription_id, razorpay_order_id, razorpay_payment_id, razorpay_signature,
         amount, status, payment_method, receipt_number
     ) VALUES (
         p_org_id, v_sub_id, p_razorpay_order_id, p_razorpay_payment_id, p_razorpay_signature,
         p_amount, 'captured', COALESCE(p_payment_method, 'razorpay'),
-        'RCP-' || to_char(NOW(), 'YYYY') || '-' || lpad(nextval('payment_receipt_seq')::TEXT, 6, '0')
+        'RCP-' || to_char(NOW(), 'YYYY') || '-' || lpad(nextval('billing_receipt_seq')::TEXT, 6, '0')
     );
 
     RETURN jsonb_build_object(
@@ -289,3 +290,6 @@ CREATE TRIGGER trg_protect_org_subscription
 -- ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 -- CREATE POLICY orders_require_active_subscription ON orders
 --     FOR INSERT WITH CHECK (is_org_subscription_active(organization_id));
+
+-- 10. Ask the Supabase API layer to pick up the new tables / function right away.
+NOTIFY pgrst, 'reload schema';

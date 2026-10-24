@@ -3,10 +3,10 @@ import type { PaymentInvoice, SubscriptionState, SubscriptionTierId } from '@/li
 import { HttpError } from '@/lib/server/http';
 import { getSupabaseAdmin } from '@/lib/server/supabase-admin';
 import {
-  captureRazorpayPayment,
   describePaymentMethod,
   fetchRazorpayOrder,
   fetchRazorpayPayment,
+  waitForCapturedPayment,
 } from '@/lib/server/razorpay-server';
 import {
   DAY_MS,
@@ -58,15 +58,15 @@ interface PaymentRecord {
   payment_method: string | null;
   receipt_number: string;
   created_at: string;
-  subscriptions?: { tier: SubscriptionTierId } | { tier: SubscriptionTierId }[] | null;
+  billing_subscriptions?: { tier: SubscriptionTierId } | { tier: SubscriptionTierId }[] | null;
 }
 
 const PAYMENT_COLUMNS =
-  'id, razorpay_order_id, razorpay_payment_id, amount, status, payment_method, receipt_number, created_at, subscriptions(tier)';
+  'id, razorpay_order_id, razorpay_payment_id, amount, status, payment_method, receipt_number, created_at, billing_subscriptions(tier)';
 
 export async function listPayments(organizationId: string, limit = 24): Promise<PaymentRecord[]> {
   const { data, error } = await getSupabaseAdmin()
-    .from('payments')
+    .from('billing_payments')
     .select(PAYMENT_COLUMNS)
     .eq('organization_id', organizationId)
     .order('created_at', { ascending: false })
@@ -79,7 +79,7 @@ export async function listPayments(organizationId: string, limit = 24): Promise<
 }
 
 export function toInvoice(p: PaymentRecord): PaymentInvoice {
-  const sub = Array.isArray(p.subscriptions) ? p.subscriptions[0] : p.subscriptions;
+  const sub = Array.isArray(p.billing_subscriptions) ? p.billing_subscriptions[0] : p.billing_subscriptions;
   const tierId: SubscriptionTierId = sub && isTierId(sub.tier) ? sub.tier : 'starter';
   return {
     id: p.id,
@@ -158,13 +158,11 @@ export async function finalizePayment(args: {
     throw new HttpError(403, 'This payment belongs to a different restaurant.', 'ORG_MISMATCH');
   }
 
-  let payment = await fetchRazorpayPayment(args.paymentId);
-  if (payment.order_id !== order.id) {
+  const initial = await fetchRazorpayPayment(args.paymentId);
+  if (initial.order_id !== order.id) {
     throw new HttpError(400, 'Payment does not belong to this order.', 'PAYMENT_ORDER_MISMATCH');
   }
-  if (payment.status === 'authorized') {
-    payment = await captureRazorpayPayment(payment.id, order.amount); // account not on auto-capture
-  }
+  const payment = initial.status === 'captured' ? initial : await waitForCapturedPayment(initial.id, order.amount);
   if (payment.status !== 'captured') {
     throw new HttpError(402, `Payment is not completed yet (status: ${payment.status}).`, 'PAYMENT_NOT_CAPTURED');
   }
@@ -184,8 +182,14 @@ export async function finalizePayment(args: {
     p_period_days: PERIOD_DAYS,
   });
   if (error) {
-    console.error('[billing] activate_organization_subscription failed:', error.message);
-    throw new HttpError(500, 'Payment received but activation failed. It will be retried automatically.', 'ACTIVATION_FAILED');
+    const reason = [error.code, error.message, error.hint].filter(Boolean).join(' | ');
+    console.error('[billing] activate_organization_subscription failed:', reason);
+    throw new HttpError(
+      500,
+      'Payment received but activation failed. It will be retried automatically.',
+      'ACTIVATION_FAILED',
+      reason
+    );
   }
 
   const [org, payments] = await Promise.all([loadOrganization(organizationId), listPayments(organizationId, 1)]);

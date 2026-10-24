@@ -40,11 +40,13 @@ const PLACEHOLDER_STATE: SubscriptionState = {
 export class BillingApiError extends Error {
   status: number;
   code?: string;
-  constructor(message: string, status: number, code?: string) {
+  detail?: string;
+  constructor(message: string, status: number, code?: string, detail?: string) {
     super(message);
     this.name = 'BillingApiError';
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -99,7 +101,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, { ...init, headers, cache: 'no-store' });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new BillingApiError(data?.error || `Request failed (${res.status})`, res.status, data?.code);
+    throw new BillingApiError(data?.error || `Request failed (${res.status})`, res.status, data?.code, data?.detail);
   }
   return data as T;
 }
